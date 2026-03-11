@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QSO Contest Logger</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Cloudlog Contest Logger</p>
+          <h1>Fast serial logging without the usual clutter.</h1>
+          <p class="hero-copy">
+            Enter the callsign, the received serial, pick the band, and push it straight into Cloudlog.
+          </p>
+        </div>
+        <div class="hero-stats">
+          <div class="stat-card">
+            <span class="stat-label">Next sent</span>
+            <strong id="next-serial-display">001</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Lookup</span>
+            <strong id="lookup-provider-display">hamdb</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <section class="panel panel-form">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Live Entry</p>
+              <h2>Log one QSO</h2>
+            </div>
+            <span class="status-pill" id="app-status">Loading</span>
+          </div>
+
+          <form id="log-form" class="log-form" novalidate>
+            <label class="field">
+              <span>Callsign</span>
+              <input id="callsign-input" name="callsign" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="F4ABC">
+            </label>
+
+            <div class="lookup-panel">
+              <div class="lookup-row">
+                <span class="lookup-label">Format</span>
+                <span class="lookup-value" id="format-status">Waiting</span>
+              </div>
+              <div class="lookup-row">
+                <span class="lookup-label">Cloudlog</span>
+                <span class="lookup-value" id="cloudlog-status">Waiting</span>
+              </div>
+              <div class="lookup-row">
+                <span class="lookup-label">Callbook</span>
+                <span class="lookup-value" id="external-status">Waiting</span>
+              </div>
+              <div class="lookup-detail" id="lookup-detail">Type a callsign to start live lookup.</div>
+            </div>
+
+            <div class="form-grid">
+              <label class="field">
+                <span>Received serial</span>
+                <input id="received-serial-input" name="receivedSerial" inputmode="numeric" pattern="[0-9]*" placeholder="001">
+              </label>
+
+              <label class="field">
+                <span>Sent serial</span>
+                <input id="sent-serial-input" name="sentSerial" inputmode="numeric" pattern="[0-9]*">
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Band</span>
+              <div class="band-list" id="band-list"></div>
+            </label>
+
+            <button class="primary-button" id="submit-button" type="submit">Log QSO</button>
+            <p class="form-message" id="form-message"></p>
+          </form>
+        </section>
+
+        <section class="panel panel-side">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Recent Activity</p>
+              <h2>Last QSOs</h2>
+            </div>
+          </div>
+
+          <div class="station-meta" id="station-meta">
+            Waiting for Cloudlog configuration.
+          </div>
+
+          <ul class="recent-list" id="recent-list"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
