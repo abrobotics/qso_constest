@@ -24,7 +24,15 @@ const config = {
     .split(",")
     .map((band) => band.trim())
     .filter(Boolean),
-  callsignLookupProvider: (process.env.CALLSIGN_LOOKUP_PROVIDER || "hamdb").trim().toLowerCase()
+  qrzAgent: (process.env.QRZ_AGENT || "qso_constest/0.1.0").trim(),
+  qrzPassword: process.env.QRZ_PASSWORD || "",
+  qrzUsername: process.env.QRZ_USERNAME || ""
+};
+
+const qrzSession = {
+  key: "",
+  lastError: "",
+  username: ""
 };
 
 const server = http.createServer(async (req, res) => {
@@ -70,7 +78,7 @@ async function handleBootstrap(_req, res) {
       defaultRstRcvd: config.defaultRstRcvd,
       serialStart: config.serialStart,
       serialPad: config.serialPad,
-      lookupProvider: config.callsignLookupProvider
+      lookupProvider: "hamdb + qrz"
     }
   };
 
@@ -132,7 +140,7 @@ async function handleLookup(_req, res, url) {
   if (lookupResult.status === "fulfilled") {
     response.external = lookupResult.value;
   } else {
-    response.external = { provider: config.callsignLookupProvider, ok: false, message: lookupResult.reason.message };
+    response.external = { provider: "combined", ok: false, message: lookupResult.reason.message };
   }
 
   return sendJson(res, 200, response);
@@ -153,6 +161,14 @@ async function handleLog(req, res) {
 
   if (!callsign || !band || !receivedSerial || !Number.isFinite(sentSerialValue) || !stationProfileId) {
     return sendJson(res, 400, { error: "Callsign, band, serials, and station profile are required" });
+  }
+
+  const duplicateCheck = await checkCloudlogCallsign(callsign, band);
+  if (isCloudlogAlreadyLogged(duplicateCheck)) {
+    return sendJson(res, 409, {
+      error: `${callsign} is already logged in Cloudlog for ${band}.`,
+      cloudlog: summarizeCloudlogLookup(duplicateCheck)
+    });
   }
 
   const sentSerial = String(sentSerialValue).padStart(config.serialPad, "0");
@@ -260,45 +276,78 @@ async function checkCloudlogCallsign(callsign, band) {
 }
 
 async function lookupCallsign(callsign) {
-  if (config.callsignLookupProvider === "none") {
-    return { provider: "none", ok: false, message: "External lookup disabled" };
-  }
+  const [hamdbResult, qrzResult] = await Promise.all([
+    lookupHamdbCallsignSafe(callsign),
+    lookupQrzCallsignSafe(callsign)
+  ]);
 
-  if (config.callsignLookupProvider === "hamdb") {
-    const endpoint = `https://api.hamdb.org/${encodeURIComponent(callsign)}/json/qso_constest`;
-    const response = await fetch(endpoint, {
-      headers: {
-        "User-Agent": "qso-constest/0.1.0"
-      }
-    });
-    const data = await parseJsonResponse(response, "HamDB lookup failed");
-    const result = data.hamdb || data;
-    const status = `${result.messages?.status || ""}`.toUpperCase();
+  return combineLookupResults([hamdbResult, qrzResult], callsign);
+}
 
-    if (status === "NOT_FOUND") {
-      return { provider: "hamdb", ok: true, found: false, message: "Callsign not found in HamDB" };
-    }
-
+async function lookupHamdbCallsignSafe(callsign) {
+  try {
+    return await lookupHamdbCallsign(callsign);
+  } catch (error) {
     return {
       provider: "hamdb",
-      ok: true,
-      found: true,
-      message: "Callsign found in HamDB",
-      details: {
-        callsign: result.callsign?.call || callsign,
-        name: [result.callsign?.fname, result.callsign?.name].filter(Boolean).join(" ").trim(),
-        grid: result.callsign?.grid,
-        country: result.callsign?.country,
-        class: result.callsign?.class
-      }
+      ok: false,
+      found: false,
+      message: error.message
     };
+  }
+}
+
+async function lookupHamdbCallsign(callsign) {
+  const endpoint = `https://api.hamdb.org/${encodeURIComponent(callsign)}/json/qso_constest`;
+  const response = await fetch(endpoint, {
+    headers: {
+      "User-Agent": "qso-constest/0.1.0"
+    }
+  });
+  const data = await parseJsonResponse(response, "HamDB lookup failed");
+  const result = data.hamdb || data;
+  const status = `${result.messages?.status || ""}`.toUpperCase();
+
+  if (status === "NOT_FOUND") {
+    return { provider: "hamdb", ok: true, found: false, message: "Callsign not found in HamDB" };
   }
 
   return {
-    provider: config.callsignLookupProvider,
-    ok: false,
-    message: `Unsupported lookup provider: ${config.callsignLookupProvider}`
+    provider: "hamdb",
+    ok: true,
+    found: true,
+    message: "Callsign found in HamDB",
+    details: {
+      callsign: result.callsign?.call || callsign,
+      name: [result.callsign?.fname, result.callsign?.name].filter(Boolean).join(" ").trim(),
+      grid: result.callsign?.grid,
+      country: result.callsign?.country,
+      class: result.callsign?.class
+    }
   };
+}
+
+async function lookupQrzCallsignSafe(callsign) {
+  if (!config.qrzUsername || !config.qrzPassword) {
+    return {
+      provider: "qrz",
+      ok: false,
+      found: false,
+      skipped: true,
+      message: "QRZ credentials not configured"
+    };
+  }
+
+  try {
+    return await lookupQrzCallsign(callsign);
+  } catch (error) {
+    return {
+      provider: "qrz",
+      ok: false,
+      found: false,
+      message: error.message
+    };
+  }
 }
 
 async function postCloudlog(pathname, payload) {
@@ -313,6 +362,172 @@ async function postCloudlog(pathname, payload) {
   });
 
   return parseJsonResponse(response, `Cloudlog request failed for ${pathname}`);
+}
+
+async function lookupQrzCallsign(callsign) {
+  let sessionKey = await getQrzSessionKey();
+  let data = await fetchQrzCallsign(sessionKey, callsign);
+
+  if (isQrzSessionExpired(data.session?.error)) {
+    sessionKey = await getQrzSessionKey(true);
+    data = await fetchQrzCallsign(sessionKey, callsign);
+  }
+
+  if (data.session?.error) {
+    const message = data.session.error;
+    if (isQrzNotFound(message)) {
+      return {
+        provider: "qrz",
+        ok: true,
+        found: false,
+        message: "Callsign not found in QRZ",
+        details: {
+          callsign
+        }
+      };
+    }
+
+    throw new Error(message);
+  }
+
+  if (!data.callsign) {
+    return {
+      provider: "qrz",
+      ok: true,
+      found: false,
+      message: "Callsign not found in QRZ",
+      details: {
+        callsign
+      }
+    };
+  }
+
+  return {
+    provider: "qrz",
+    ok: true,
+    found: true,
+    message: "Callsign found in QRZ",
+    details: {
+      callsign: data.callsign.call || callsign,
+      name: [data.callsign.fname, data.callsign.name].filter(Boolean).join(" ").trim(),
+      grid: data.callsign.grid,
+      country: data.callsign.country,
+      class: data.callsign.class,
+      state: data.callsign.state,
+      county: data.callsign.county
+    }
+  };
+}
+
+function combineLookupResults(results, callsign) {
+  const successfulResults = results.filter((result) => result?.ok);
+  const foundResults = successfulResults.filter((result) => result.found === true);
+  const preferredDetailsResult =
+    foundResults.find((result) => result.provider === "qrz") ||
+    foundResults.find((result) => result.provider === "hamdb") ||
+    successfulResults.find((result) => result.provider === "qrz" && result.details) ||
+    successfulResults.find((result) => result.provider === "hamdb" && result.details) ||
+    null;
+  const warnings = results
+    .filter((result) => result && !result.ok)
+    .map((result) => `${result.provider.toUpperCase()}: ${result.message}`);
+
+  if (successfulResults.length === 0) {
+    return {
+      provider: "combined",
+      ok: false,
+      found: false,
+      message: "No callsign lookup providers available",
+      details: { callsign },
+      warnings,
+      providers: mapLookupProviders(results)
+    };
+  }
+
+  if (foundResults.length > 0) {
+    return {
+      provider: "combined",
+      ok: true,
+      found: true,
+      message: `Callsign found in ${foundResults.map((result) => result.provider.toUpperCase()).join(" + ")}`,
+      details: preferredDetailsResult?.details || { callsign },
+      warnings,
+      providers: mapLookupProviders(results)
+    };
+  }
+
+  return {
+    provider: "combined",
+    ok: true,
+    found: false,
+    message: "Callsign not found in available callbooks",
+    details: preferredDetailsResult?.details || { callsign },
+    warnings,
+    providers: mapLookupProviders(results)
+  };
+}
+
+function mapLookupProviders(results) {
+  return Object.fromEntries(
+    results
+      .filter(Boolean)
+      .map((result) => [result.provider, result])
+  );
+}
+
+async function getQrzSessionKey(forceRefresh = false) {
+  if (
+    !forceRefresh &&
+    qrzSession.key &&
+    qrzSession.username === config.qrzUsername
+  ) {
+    return qrzSession.key;
+  }
+
+  const endpoint = buildQrzUrl({
+    username: config.qrzUsername,
+    password: config.qrzPassword,
+    agent: config.qrzAgent
+  });
+  const response = await fetch(endpoint, {
+    headers: {
+      "User-Agent": config.qrzAgent
+    }
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`QRZ session request failed (${response.status})`);
+  }
+
+  const data = parseQrzXml(text);
+  if (!data.session?.key) {
+    throw new Error(data.session?.error || "QRZ did not return a session key");
+  }
+
+  qrzSession.key = data.session.key;
+  qrzSession.lastError = data.session.error || "";
+  qrzSession.username = config.qrzUsername;
+  return qrzSession.key;
+}
+
+async function fetchQrzCallsign(sessionKey, callsign) {
+  const endpoint = buildQrzUrl({
+    s: sessionKey,
+    callsign
+  });
+  const response = await fetch(endpoint, {
+    headers: {
+      "User-Agent": config.qrzAgent
+    }
+  });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`QRZ callsign request failed (${response.status})`);
+  }
+
+  return parseQrzXml(text);
 }
 
 async function parseJsonResponse(response, fallbackMessage) {
@@ -361,12 +576,8 @@ function summarizeCloudlogLookup(data) {
   }
 
   if (typeof data === "object") {
-    const workedBefore =
-      Boolean(data.result) ||
-      Boolean(data.found) ||
-      data.status === "found" ||
-      Array.isArray(data.matches) ||
-      Number(data.count || 0) > 0;
+    const rawResult = `${data.result || ""}`.trim().toLowerCase();
+    const workedBefore = isCloudlogAlreadyLogged(data);
 
     return {
       ok: true,
@@ -374,6 +585,7 @@ function summarizeCloudlogLookup(data) {
       count: Number(data.count || 0) || undefined,
       message:
         data.message ||
+        (rawResult === "not found" ? "No match found in Cloudlog" : null) ||
         (workedBefore ? "Worked before in Cloudlog" : "No match found in Cloudlog"),
       raw: data
     };
@@ -385,6 +597,90 @@ function summarizeCloudlogLookup(data) {
     message: "Cloudlog lookup completed",
     raw: data
   };
+}
+
+function parseQrzXml(xml) {
+  const sessionXml = extractXmlSection(xml, "Session");
+  const callsignXml = extractXmlSection(xml, "Callsign");
+
+  return {
+    session: sessionXml
+      ? {
+          key: extractXmlValue(sessionXml, "Key"),
+          error: extractXmlValue(sessionXml, "Error"),
+          count: extractXmlValue(sessionXml, "Count"),
+          subExp: extractXmlValue(sessionXml, "SubExp"),
+          gmTime: extractXmlValue(sessionXml, "GMTime")
+        }
+      : null,
+    callsign: callsignXml
+      ? {
+          call: extractXmlValue(callsignXml, "call"),
+          fname: extractXmlValue(callsignXml, "fname"),
+          name: extractXmlValue(callsignXml, "name"),
+          addr2: extractXmlValue(callsignXml, "addr2"),
+          state: extractXmlValue(callsignXml, "state"),
+          county: extractXmlValue(callsignXml, "county"),
+          country: extractXmlValue(callsignXml, "country"),
+          grid: extractXmlValue(callsignXml, "grid"),
+          class: extractXmlValue(callsignXml, "class"),
+          status: extractXmlValue(callsignXml, "status")
+        }
+      : null
+  };
+}
+
+function extractXmlSection(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"));
+  return match ? match[1] : "";
+}
+
+function extractXmlValue(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"));
+  return match ? decodeXmlEntities(match[1].trim()) : "";
+}
+
+function decodeXmlEntities(value) {
+  return value
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'");
+}
+
+function isQrzSessionExpired(errorMessage) {
+  const normalized = `${errorMessage || ""}`.toLowerCase();
+  return normalized.includes("session timeout") || normalized.includes("invalid session key");
+}
+
+function isQrzNotFound(errorMessage) {
+  const normalized = `${errorMessage || ""}`.toLowerCase();
+  return normalized.includes("not found");
+}
+
+function isCloudlogAlreadyLogged(data) {
+  if (data == null) {
+    return false;
+  }
+
+  if (typeof data === "boolean") {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    return data.length > 0;
+  }
+
+  const rawResult = `${data.result || ""}`.trim().toLowerCase();
+  return (
+    rawResult === "found" ||
+    rawResult === "match" ||
+    Boolean(data.found) ||
+    data.status === "found" ||
+    Array.isArray(data.matches) ||
+    Number(data.count || 0) > 0
+  );
 }
 
 function normalizeRecentQsoList(data) {
@@ -470,6 +766,15 @@ function normalizeBaseUrl(value) {
 
 function buildCloudlogUrl(pathname) {
   return `${config.cloudlogBaseUrl}/index.php/api/${pathname}`;
+}
+
+function buildQrzUrl(params) {
+  const query = Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && `${value}` !== "")
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(`${value}`)}`)
+    .join(";");
+
+  return `https://xmldata.qrz.com/xml/current/?${query}`;
 }
 
 async function readJson(req) {

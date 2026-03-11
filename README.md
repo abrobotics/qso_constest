@@ -6,7 +6,7 @@ Small web app for serial-exchange contest logging into Cloudlog.
 
 - Logs QSOs to Cloudlog through `POST /index.php/api/qso` using ADIF.
 - Checks the current callsign against Cloudlog with `logbook_check_callsign`.
-- Runs a live callsign lookup through HamDB by default.
+- Runs a live callsign lookup through HamDB or QRZ.
 - Shows recent QSOs and pre-fills the next sent serial.
 
 ## Cloudlog APIs used
@@ -36,6 +36,7 @@ cp .env.example .env
 - `CLOUDLOG_API_KEY`
 - `CLOUDLOG_LOGBOOK_PUBLIC_SLUG`
 - optionally `CLOUDLOG_STATION_PROFILE_ID`
+- optionally `QRZ_USERNAME`, `QRZ_PASSWORD`, and `QRZ_AGENT`
 
 3. Start the app:
 
@@ -48,5 +49,12 @@ npm start
 ## Notes
 
 - The app keeps Cloudlog credentials on the server side.
-- QRZ XML lookup is not the default because QRZ XML access is a paid feature. HamDB is used instead as a no-auth fallback.
+- Callsign lookup now tries both HamDB and QRZ for each query.
+- QRZ XML lookup is supported through the documented session flow: first request a session key, then query callsigns with that key.
+- If QRZ credentials are missing or invalid, the app degrades gracefully and keeps using HamDB.
+- QRZ XML access may require the appropriate QRZ subscription level for live XML data access.
 - HamDB coverage is partial worldwide, so the app treats lookup as advisory. Cloudlog logging still works without it.
+
+## QRZ Reference
+
+- https://www.qrz.com/docs/xml/current_spec.html

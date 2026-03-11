@@ -23,7 +23,7 @@
           </div>
           <div class="stat-card">
             <span class="stat-label">Lookup</span>
-            <strong id="lookup-provider-display">hamdb</strong>
+            <strong id="lookup-provider-display">hamdb + qrz</strong>
           </div>
         </div>
       </header>
@@ -68,7 +68,12 @@
 
               <label class="field">
                 <span>Sent serial</span>
-                <input id="sent-serial-input" name="sentSerial" inputmode="numeric" pattern="[0-9]*">
+                <div class="locked-input">
+                  <input id="sent-serial-input" name="sentSerial" inputmode="numeric" pattern="[0-9]*" readonly>
+                  <button class="lock-button" id="sent-serial-lock-button" type="button" aria-pressed="true">
+                    Locked
+                  </button>
+                </div>
               </label>
             </div>
 

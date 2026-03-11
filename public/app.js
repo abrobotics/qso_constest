@@ -1,8 +1,12 @@
 const state = {
+  appReady: false,
+  cloudlogAlreadyLogged: false,
   config: null,
+  isSubmitting: false,
   nextSerial: 1,
   selectedBand: "",
   selectedStationProfileId: "",
+  sentSerialLocked: true,
   lookupTimer: null,
   lastLookupValue: ""
 };
@@ -21,6 +25,7 @@ const elements = {
   nextSerialDisplay: document.querySelector("#next-serial-display"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
+  sentSerialLockButton: document.querySelector("#sent-serial-lock-button"),
   sentSerialInput: document.querySelector("#sent-serial-input"),
   stationMeta: document.querySelector("#station-meta"),
   submitButton: document.querySelector("#submit-button")
@@ -44,6 +49,11 @@ elements.form.addEventListener("submit", async (event) => {
     return;
   }
 
+  if (state.cloudlogAlreadyLogged) {
+    setFormMessage(`${callsign} is already logged in Cloudlog for ${state.selectedBand}.`, "error");
+    return;
+  }
+
   setSubmitting(true);
 
   try {
@@ -63,15 +73,21 @@ elements.form.addEventListener("submit", async (event) => {
 
     const payload = await response.json();
     if (!response.ok) {
+      if (response.status === 409) {
+        state.cloudlogAlreadyLogged = true;
+        updateSubmitAvailability();
+      }
       throw new Error(payload.error || "Log failed");
     }
 
     state.nextSerial = payload.nextSerial;
+    state.cloudlogAlreadyLogged = false;
     renderNextSerial();
     renderRecentQsos(payload.recentQsos || []);
     elements.callsignInput.value = "";
     elements.receivedSerialInput.value = "";
     elements.sentSerialInput.value = String(state.nextSerial).padStart(state.config.serialPad, "0");
+    setSentSerialLocked(true);
     resetLookup();
     setFormMessage(`Logged ${payload.callsign} on ${state.selectedBand}.`, "success");
     elements.callsignInput.focus();
@@ -86,6 +102,8 @@ elements.callsignInput.addEventListener("input", () => {
   const callsign = normalizeCallsign(elements.callsignInput.value);
   elements.callsignInput.value = callsign;
   renderFormatState(callsign);
+  state.cloudlogAlreadyLogged = false;
+  updateSubmitAvailability();
 
   window.clearTimeout(state.lookupTimer);
 
@@ -111,6 +129,10 @@ elements.sentSerialInput.addEventListener("input", () => {
   elements.sentSerialInput.value = digitsOnly(elements.sentSerialInput.value);
 });
 
+elements.sentSerialLockButton.addEventListener("click", () => {
+  setSentSerialLocked(!state.sentSerialLocked);
+});
+
 async function bootstrap() {
   const response = await fetch("/api/bootstrap");
   const payload = await response.json();
@@ -130,15 +152,18 @@ async function bootstrap() {
   renderRecentQsos(payload.recentQsos || []);
   renderStationMeta(payload);
   renderFormatState("");
+  setSentSerialLocked(true);
 
   if (payload.ready) {
+    state.appReady = true;
     setAppStatus("Ready", "ready");
-    elements.submitButton.disabled = false;
   } else {
+    state.appReady = false;
     setAppStatus("Config needed", "error");
     setFormMessage(`Missing configuration: ${payload.issues.join(", ")}`, "error");
-    elements.submitButton.disabled = true;
   }
+
+  updateSubmitAvailability();
 }
 
 function renderBands(bands) {
@@ -157,6 +182,8 @@ function renderBands(bands) {
 
     button.addEventListener("click", () => {
       state.selectedBand = band;
+      state.cloudlogAlreadyLogged = false;
+      updateSubmitAvailability();
       for (const sibling of elements.bandList.querySelectorAll(".band-button")) {
         sibling.classList.toggle("selected", sibling.dataset.band === band);
       }
@@ -239,12 +266,19 @@ async function lookupCallsign(callsign) {
 
   if (payload.cloudlog) {
     if (payload.cloudlog.ok) {
+      const cloudlogResult = `${payload.cloudlog.raw?.result || ""}`.trim().toLowerCase();
+      const alreadyLogged = cloudlogResult === "found";
+      state.cloudlogAlreadyLogged = alreadyLogged;
+      updateSubmitAvailability();
+
       setLookupState(
         "Cloudlog",
-        payload.cloudlog.workedBefore ? "Worked before" : "New",
-        payload.cloudlog.workedBefore ? "warn" : "ready"
+        alreadyLogged ? "Already logged" : "New",
+        alreadyLogged ? "warn" : "ready"
       );
     } else {
+      state.cloudlogAlreadyLogged = false;
+      updateSubmitAvailability();
       setLookupState("Cloudlog", "Unavailable", "error");
     }
   }
@@ -263,6 +297,7 @@ async function lookupCallsign(callsign) {
   if (payload.external?.details?.name) detailParts.push(payload.external.details.name);
   if (payload.external?.details?.country) detailParts.push(payload.external.details.country);
   if (payload.external?.details?.grid) detailParts.push(`Grid ${payload.external.details.grid}`);
+  if (Array.isArray(payload.external?.warnings)) detailParts.push(...payload.external.warnings);
   if (detailParts.length === 0) {
     detailParts.push(payload.external?.message || payload.cloudlog?.message || "Lookup complete.");
   }
@@ -281,12 +316,14 @@ function renderFormatState(callsign) {
 }
 
 function resetLookup(resetValue = true) {
+  state.cloudlogAlreadyLogged = false;
   setLookupState("Cloudlog", "Waiting", "pending");
   setExternalState("Callbook", "Waiting", "pending");
   elements.lookupDetail.textContent = "Type a callsign to start live lookup.";
   if (resetValue) {
     state.lastLookupValue = "";
   }
+  updateSubmitAvailability();
 }
 
 function setLookupState(_label, value, tone) {
@@ -318,8 +355,37 @@ function clearFormMessage() {
 }
 
 function setSubmitting(isSubmitting) {
-  elements.submitButton.disabled = isSubmitting;
-  elements.submitButton.textContent = isSubmitting ? "Logging..." : "Log QSO";
+  state.isSubmitting = isSubmitting;
+  updateSubmitAvailability();
+}
+
+function setSentSerialLocked(isLocked) {
+  state.sentSerialLocked = isLocked;
+  elements.sentSerialInput.readOnly = isLocked;
+  elements.sentSerialInput.dataset.locked = String(isLocked);
+  elements.sentSerialInput.setAttribute("aria-readonly", String(isLocked));
+  elements.sentSerialLockButton.textContent = isLocked ? "Locked" : "Unlocked";
+  elements.sentSerialLockButton.dataset.locked = String(isLocked);
+  elements.sentSerialLockButton.setAttribute("aria-pressed", String(isLocked));
+
+  if (!isLocked) {
+    elements.sentSerialInput.focus();
+    elements.sentSerialInput.select();
+  }
+}
+
+function updateSubmitAvailability() {
+  elements.submitButton.disabled =
+    state.isSubmitting ||
+    !state.appReady ||
+    state.cloudlogAlreadyLogged;
+
+  if (state.isSubmitting) {
+    elements.submitButton.textContent = "Logging...";
+    return;
+  }
+
+  elements.submitButton.textContent = state.cloudlogAlreadyLogged ? "Already logged" : "Log QSO";
 }
 
 function normalizeCallsign(value) {
