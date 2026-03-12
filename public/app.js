@@ -25,6 +25,7 @@ const elements = {
   form: document.querySelector("#log-form"),
   formMessage: document.querySelector("#form-message"),
   backupStatus: document.querySelector("#backup-status"),
+  heroTitle: document.querySelector("#hero-title"),
   lookupDetail: document.querySelector("#lookup-detail"),
   lookupProviderDisplay: document.querySelector("#lookup-provider-display"),
   nextSerialDisplay: document.querySelector("#next-serial-display"),
@@ -171,6 +172,7 @@ async function bootstrap() {
   renderBackupState(payload.backupCount || 0, state.operatorStats);
   renderNextSerial();
   renderRecentQsos(payload.recentQsos || []);
+  renderHeroTitle(payload);
   renderStationMeta(payload);
   renderFormatState("");
   setSentSerialLocked(true);
@@ -355,6 +357,15 @@ function renderStationMeta(payload) {
   }
 
   elements.stationMeta.innerHTML = `Station profile will be resolved from Cloudlog on submit.${publicLogbookHtml}`;
+}
+
+function renderHeroTitle(payload) {
+  const stations = Array.isArray(payload.stations) ? payload.stations : [];
+  const selected = stations.find((station) => `${station.station_id}` === state.selectedStationProfileId);
+
+  elements.heroTitle.textContent = selected?.station_callsign
+    ? `Keep it up, ${selected.station_callsign} !`
+    : "Keep it up !";
 }
 
 async function lookupCallsign(callsign) {
