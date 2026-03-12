@@ -31,7 +31,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -80,7 +81,7 @@ input {
 }
 
 .hero h1 {
-  max-width: 10ch;
+  /* max-width: 10ch; */
   font-size: clamp(2.4rem, 4vw, 4.8rem);
   line-height: 0.93;
 }
@@ -178,7 +179,8 @@ input {
   color: var(--muted);
 }
 
-input {
+input,
+select {
   width: 100%;
   padding: 15px 16px;
   border: 1px solid rgba(79, 61, 33, 0.16);
@@ -188,7 +190,8 @@ input {
   transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: rgba(186, 58, 27, 0.5);
   box-shadow: 0 0 0 4px rgba(186, 58, 27, 0.09);
@@ -249,10 +252,41 @@ input[readonly][data-locked="true"] {
 
 .lookup-detail,
 .station-meta,
+.operator-panel-copy,
 .form-message,
 .recent-empty {
   color: var(--muted);
   line-height: 1.45;
+}
+
+.operator-panel {
+  margin-top: 18px;
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 244, 217, 0.62);
+}
+
+.operator-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.operator-panel-head span {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.operator-panel-head strong {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.operator-panel-copy {
+  margin: 10px 0 0;
 }
 
 .form-grid {
@@ -361,6 +395,35 @@ input[readonly][data-locked="true"] {
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
   font-size: 0.83rem;
   color: var(--muted);
+}
+
+.operator-stats-list {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.operator-stat-item,
+.operator-stat-empty {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(79, 61, 33, 0.1);
+}
+
+.operator-stat-item strong,
+.operator-stat-item span {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.operator-stat-empty {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 @keyframes rise {

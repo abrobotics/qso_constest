@@ -11,13 +11,19 @@ loadEnvFile(ENV_PATH);
 
 const config = {
   port: Number.parseInt(process.env.PORT || "3000", 10),
+  backupLogFile: resolveWorkspacePath(process.env.BACKUP_LOG_FILE || "data/qso-backup.ndjson"),
   cloudlogBaseUrl: normalizeBaseUrl(process.env.CLOUDLOG_BASE_URL || ""),
   cloudlogApiKey: process.env.CLOUDLOG_API_KEY || "",
   cloudlogLogbookSlug: process.env.CLOUDLOG_LOGBOOK_PUBLIC_SLUG || "",
   cloudlogStationProfileId: process.env.CLOUDLOG_STATION_PROFILE_ID || "",
   defaultMode: (process.env.DEFAULT_MODE || "SSB").trim().toUpperCase(),
+  defaultOperatorCallsign: normalizeCallsign(process.env.DEFAULT_OPERATOR_CALLSIGN || ""),
   defaultRstSent: (process.env.DEFAULT_RST_SENT || "59").trim(),
   defaultRstRcvd: (process.env.DEFAULT_RST_RCVD || "59").trim(),
+  operatorCallsigns: (process.env.OPERATORS || "")
+    .split(",")
+    .map((callsign) => normalizeCallsign(callsign))
+    .filter(Boolean),
   serialStart: Number.parseInt(process.env.SERIAL_START || "1", 10),
   serialPad: Math.max(1, Number.parseInt(process.env.SERIAL_PAD || "3", 10)),
   bands: (process.env.BANDS || "160m,80m,40m,20m,15m,10m")
@@ -68,18 +74,26 @@ server.listen(config.port, () => {
 
 async function handleBootstrap(_req, res) {
   const issues = validateBaseConfig();
+  const backupState = await readBackupState();
   const payload = {
     ready: issues.length === 0,
     issues,
     config: {
       bands: config.bands,
+      backupFile: path.basename(config.backupLogFile),
       defaultMode: config.defaultMode,
       defaultRstSent: config.defaultRstSent,
       defaultRstRcvd: config.defaultRstRcvd,
+      publicLogbookSlug: config.cloudlogLogbookSlug,
+      publicLogbookUrl: buildPublicLogbookUrl(),
       serialStart: config.serialStart,
       serialPad: config.serialPad,
       lookupProvider: "hamdb + qrz"
-    }
+    },
+    backupCount: backupState.entries.length,
+    operatorStats: backupState.operatorStats,
+    operators: resolveOperatorChoices([], backupState, []),
+    selectedOperatorCallsign: pickDefaultOperatorCallsign(resolveOperatorChoices([], backupState, []))
   };
 
   if (issues.length > 0) {
@@ -106,6 +120,8 @@ async function handleBootstrap(_req, res) {
   }
 
   payload.selectedStationProfileId = pickStationProfileId(payload.stations || []);
+  payload.operators = resolveOperatorChoices(payload.stations || [], backupState, payload.recentQsos || []);
+  payload.selectedOperatorCallsign = pickDefaultOperatorCallsign(payload.operators);
   return sendJson(res, 200, payload);
 }
 
@@ -155,12 +171,13 @@ async function handleLog(req, res) {
   const body = await readJson(req);
   const callsign = normalizeCallsign(body.callsign || "");
   const band = (body.band || "").trim();
+  const operatorCallsign = normalizeCallsign(body.operatorCallsign || "");
   const receivedSerial = `${body.receivedSerial || ""}`.trim();
   const sentSerialValue = Number.parseInt(`${body.sentSerial || ""}`, 10);
   const stationProfileId = `${body.stationProfileId || ""}`.trim() || pickStationProfileId(await fetchStationProfiles());
 
-  if (!callsign || !band || !receivedSerial || !Number.isFinite(sentSerialValue) || !stationProfileId) {
-    return sendJson(res, 400, { error: "Callsign, band, serials, and station profile are required" });
+  if (!callsign || !band || !operatorCallsign || !receivedSerial || !Number.isFinite(sentSerialValue) || !stationProfileId) {
+    return sendJson(res, 400, { error: "Operator, callsign, band, serials, and station profile are required" });
   }
 
   const duplicateCheck = await checkCloudlogCallsign(callsign, band);
@@ -180,6 +197,7 @@ async function handleLog(req, res) {
     call: callsign,
     band,
     mode: config.defaultMode,
+    operator: operatorCallsign,
     qso_date: qsoDate,
     time_on: timeOn,
     time_off: timeOn,
@@ -198,13 +216,37 @@ async function handleLog(req, res) {
     string: adif
   });
 
-  const recent = await fetchRecentQsos(20).catch(() => []);
+  const backupRecord = {
+    loggedAt: now.toISOString(),
+    operatorCallsign,
+    callsign,
+    band,
+    receivedSerial: receivedSerialString,
+    sentSerial,
+    stationProfileId,
+    qsoDate,
+    timeOn,
+    cloudlogResponse
+  };
+  const backupError = await appendBackupRecord(backupRecord)
+    .then(() => "")
+    .catch((error) => error.message);
+
+  const [recent, backupState] = await Promise.all([
+    fetchRecentQsos(20).catch(() => []),
+    readBackupState()
+  ]);
+
   return sendJson(res, 200, {
     ok: true,
     callsign,
+    operatorCallsign,
     sentSerial,
+    backupCount: backupState.entries.length,
+    backupError: backupError || undefined,
     cloudlogResponse,
     nextSerial: sentSerialValue + 1,
+    operatorStats: backupState.operatorStats,
     recentQsos: recent
   });
 }
@@ -252,6 +294,54 @@ function pickStationProfileId(stations) {
   return activeStation ? `${activeStation.station_id}` : "";
 }
 
+function resolveOperatorChoices(stations, backupState, recentQsos) {
+  const operatorChoices = new Set(config.operatorCallsigns);
+
+  if (config.defaultOperatorCallsign) {
+    operatorChoices.add(config.defaultOperatorCallsign);
+  }
+
+  if (Array.isArray(stations)) {
+    for (const station of stations) {
+      const stationCallsign = normalizeCallsign(station.station_callsign || "");
+      if (stationCallsign) {
+        operatorChoices.add(stationCallsign);
+      }
+    }
+  }
+
+  if (Array.isArray(backupState?.operatorStats)) {
+    for (const operator of backupState.operatorStats) {
+      if (operator.callsign) {
+        operatorChoices.add(operator.callsign);
+      }
+    }
+  }
+
+  if (Array.isArray(recentQsos)) {
+    for (const qso of recentQsos) {
+      const operatorCallsign = normalizeCallsign(qso.operator || "");
+      if (operatorCallsign) {
+        operatorChoices.add(operatorCallsign);
+      }
+    }
+  }
+
+  return Array.from(operatorChoices).sort();
+}
+
+function pickDefaultOperatorCallsign(operatorChoices) {
+  if (config.defaultOperatorCallsign && operatorChoices.includes(config.defaultOperatorCallsign)) {
+    return config.defaultOperatorCallsign;
+  }
+
+  if (config.operatorCallsigns.length > 0) {
+    return config.operatorCallsigns[0];
+  }
+
+  return operatorChoices[0] || "";
+}
+
 async function fetchStationProfiles() {
   const endpoint = buildCloudlogUrl(`station_info/${encodeURIComponent(config.cloudlogApiKey)}`);
   const response = await fetch(endpoint);
@@ -264,6 +354,59 @@ async function fetchRecentQsos(limit) {
   const response = await fetch(endpoint);
   const data = await parseJsonResponse(response, "Unable to fetch recent QSOs");
   return normalizeRecentQsoList(data);
+}
+
+async function readBackupState() {
+  try {
+    const raw = await fs.readFile(config.backupLogFile, "utf8");
+    const entries = raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch (_error) {
+          return [];
+        }
+      });
+
+    return {
+      entries,
+      operatorStats: buildOperatorStats(entries)
+    };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return {
+        entries: [],
+        operatorStats: []
+      };
+    }
+
+    throw error;
+  }
+}
+
+async function appendBackupRecord(record) {
+  await fs.mkdir(path.dirname(config.backupLogFile), { recursive: true });
+  await fs.appendFile(config.backupLogFile, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+function buildOperatorStats(entries) {
+  const counts = new Map();
+
+  for (const entry of entries) {
+    const operatorCallsign = normalizeCallsign(entry.operatorCallsign || "");
+    if (!operatorCallsign) {
+      continue;
+    }
+
+    counts.set(operatorCallsign, (counts.get(operatorCallsign) || 0) + 1);
+  }
+
+  return Array.from(counts.entries())
+    .map(([callsign, contacts]) => ({ callsign, contacts }))
+    .sort((left, right) => right.contacts - left.contacts || left.callsign.localeCompare(right.callsign));
 }
 
 async function checkCloudlogCallsign(callsign, band) {
@@ -768,6 +911,14 @@ function buildCloudlogUrl(pathname) {
   return `${config.cloudlogBaseUrl}/index.php/api/${pathname}`;
 }
 
+function buildPublicLogbookUrl() {
+  if (!config.cloudlogBaseUrl || !config.cloudlogLogbookSlug) {
+    return "";
+  }
+
+  return `${config.cloudlogBaseUrl}/index.php/visitor/${encodeURIComponent(config.cloudlogLogbookSlug)}`;
+}
+
 function buildQrzUrl(params) {
   const query = Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && `${value}` !== "")
@@ -775,6 +926,14 @@ function buildQrzUrl(params) {
     .join(";");
 
   return `https://xmldata.qrz.com/xml/current/?${query}`;
+}
+
+function resolveWorkspacePath(filePath) {
+  if (path.isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  return path.join(ROOT, filePath);
 }
 
 async function readJson(req) {

@@ -11,7 +11,7 @@
       <header class="hero">
         <div>
           <p class="eyebrow">Cloudlog Contest Logger</p>
-          <h1>Fast serial logging without the usual clutter.</h1>
+          <h1>Live QSO Contest Logger</h1>
           <p class="hero-copy">
             Enter the callsign, the received serial, pick the band, and push it straight into Cloudlog.
           </p>
@@ -40,10 +40,15 @@
 
           <form id="log-form" class="log-form" novalidate>
             <label class="field">
+              <span>Operator</span>
+              <select id="operator-select" name="operatorCallsign"></select>
+            </label>
+            
+            <label class="field">
               <span>Callsign</span>
               <input id="callsign-input" name="callsign" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="F4ABC">
             </label>
-
+            
             <div class="lookup-panel">
               <div class="lookup-row">
                 <span class="lookup-label">Format</span>
@@ -97,6 +102,17 @@
 
           <div class="station-meta" id="station-meta">
             Waiting for Cloudlog configuration.
+          </div>
+
+          <div class="operator-panel">
+            <div class="operator-panel-head">
+              <span>Local backup</span>
+              <strong id="backup-status">0 QSOs saved</strong>
+            </div>
+            <p class="operator-panel-copy" id="operator-summary">
+              Operator stats will appear as soon as backup logging starts.
+            </p>
+            <ul class="operator-stats-list" id="operator-stats-list"></ul>
           </div>
 
           <ul class="recent-list" id="recent-list"></ul>

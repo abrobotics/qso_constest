@@ -1,10 +1,14 @@
+const OPERATOR_STORAGE_KEY = "qso-contest-operator";
+
 const state = {
   appReady: false,
   cloudlogAlreadyLogged: false,
   config: null,
   isSubmitting: false,
   nextSerial: 1,
+  operatorStats: [],
   selectedBand: "",
+  selectedOperatorCallsign: "",
   selectedStationProfileId: "",
   sentSerialLocked: true,
   lookupTimer: null,
@@ -20,9 +24,13 @@ const elements = {
   formatStatus: document.querySelector("#format-status"),
   form: document.querySelector("#log-form"),
   formMessage: document.querySelector("#form-message"),
+  backupStatus: document.querySelector("#backup-status"),
   lookupDetail: document.querySelector("#lookup-detail"),
   lookupProviderDisplay: document.querySelector("#lookup-provider-display"),
   nextSerialDisplay: document.querySelector("#next-serial-display"),
+  operatorSelect: document.querySelector("#operator-select"),
+  operatorStatsList: document.querySelector("#operator-stats-list"),
+  operatorSummary: document.querySelector("#operator-summary"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
   sentSerialLockButton: document.querySelector("#sent-serial-lock-button"),
@@ -41,11 +49,12 @@ elements.form.addEventListener("submit", async (event) => {
   clearFormMessage();
 
   const callsign = normalizeCallsign(elements.callsignInput.value);
+  const operatorCallsign = state.selectedOperatorCallsign;
   const receivedSerial = digitsOnly(elements.receivedSerialInput.value);
   const sentSerial = digitsOnly(elements.sentSerialInput.value);
 
-  if (!callsign || !receivedSerial || !sentSerial || !state.selectedBand) {
-    setFormMessage("Callsign, serials, and band are required.", "error");
+  if (!callsign || !operatorCallsign || !receivedSerial || !sentSerial || !state.selectedBand) {
+    setFormMessage("Operator, callsign, serials, and band are required.", "error");
     return;
   }
 
@@ -64,6 +73,7 @@ elements.form.addEventListener("submit", async (event) => {
       },
       body: JSON.stringify({
         callsign,
+        operatorCallsign,
         receivedSerial,
         sentSerial,
         band: state.selectedBand,
@@ -82,7 +92,9 @@ elements.form.addEventListener("submit", async (event) => {
 
     state.nextSerial = payload.nextSerial;
     state.cloudlogAlreadyLogged = false;
+    state.operatorStats = payload.operatorStats || [];
     renderNextSerial();
+    renderBackupState(payload.backupCount, state.operatorStats, payload.backupError);
     renderRecentQsos(payload.recentQsos || []);
     elements.callsignInput.value = "";
     elements.receivedSerialInput.value = "";
@@ -133,6 +145,12 @@ elements.sentSerialLockButton.addEventListener("click", () => {
   setSentSerialLocked(!state.sentSerialLocked);
 });
 
+elements.operatorSelect.addEventListener("change", () => {
+  state.selectedOperatorCallsign = normalizeCallsign(elements.operatorSelect.value);
+  storePreferredOperator(state.selectedOperatorCallsign);
+  updateSubmitAvailability();
+});
+
 async function bootstrap() {
   const response = await fetch("/api/bootstrap");
   const payload = await response.json();
@@ -143,11 +161,14 @@ async function bootstrap() {
 
   state.config = payload.config;
   state.nextSerial = payload.nextSerial || payload.config.serialStart;
+  state.operatorStats = payload.operatorStats || [];
   state.selectedStationProfileId = payload.selectedStationProfileId || "";
   state.selectedBand = payload.config.bands[0] || "";
 
   elements.lookupProviderDisplay.textContent = payload.config.lookupProvider;
   renderBands(payload.config.bands);
+  renderOperatorOptions(payload.operators || [], payload.selectedOperatorCallsign || "");
+  renderBackupState(payload.backupCount || 0, state.operatorStats);
   renderNextSerial();
   renderRecentQsos(payload.recentQsos || []);
   renderStationMeta(payload);
@@ -206,6 +227,43 @@ function renderNextSerial() {
   }
 }
 
+function renderOperatorOptions(operators, fallbackOperatorCallsign) {
+  const preferredOperator = getStoredPreferredOperator();
+  const availableOperators = operators.filter(Boolean);
+  const selectedOperator =
+    (preferredOperator && availableOperators.includes(preferredOperator) && preferredOperator) ||
+    fallbackOperatorCallsign ||
+    availableOperators[0] ||
+    "";
+
+  elements.operatorSelect.innerHTML = "";
+
+  if (availableOperators.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No operator configured";
+    elements.operatorSelect.appendChild(option);
+    elements.operatorSelect.disabled = true;
+    state.selectedOperatorCallsign = "";
+    updateSubmitAvailability();
+    return;
+  }
+
+  for (const operator of availableOperators) {
+    const option = document.createElement("option");
+    option.value = operator;
+    option.textContent = operator;
+    option.selected = operator === selectedOperator;
+    elements.operatorSelect.appendChild(option);
+  }
+
+  elements.operatorSelect.disabled = false;
+  elements.operatorSelect.value = selectedOperator;
+  state.selectedOperatorCallsign = selectedOperator;
+  storePreferredOperator(selectedOperator);
+  updateSubmitAvailability();
+}
+
 function renderRecentQsos(qsos) {
   elements.recentList.innerHTML = "";
 
@@ -234,6 +292,46 @@ function renderRecentQsos(qsos) {
   }
 }
 
+function renderBackupState(backupCount, operatorStats, backupError = "") {
+  const count = Number.isFinite(backupCount) ? backupCount : 0;
+  elements.backupStatus.textContent = `${count} QSOs saved`;
+  state.operatorStats = Array.isArray(operatorStats) ? operatorStats : [];
+  renderOperatorStats(state.operatorStats, backupError);
+}
+
+function renderOperatorStats(operatorStats, backupError = "") {
+  elements.operatorStatsList.innerHTML = "";
+
+  if (!operatorStats.length) {
+    const item = document.createElement("li");
+    item.className = "operator-stat-empty";
+    item.textContent = backupError || "Operator stats will appear as soon as the first local backup is written.";
+    elements.operatorStatsList.appendChild(item);
+    elements.operatorSummary.textContent = backupError || "No operator activity recorded yet.";
+    return;
+  }
+
+  const leader = operatorStats[0];
+  elements.operatorSummary.textContent = `${leader.callsign} leads with ${leader.contacts} contacts.`;
+
+  for (const operator of operatorStats) {
+    const item = document.createElement("li");
+    item.className = "operator-stat-item";
+    item.innerHTML = `
+      <strong>${escapeHtml(operator.callsign)}</strong>
+      <span>${escapeHtml(String(operator.contacts))} QSOs</span>
+    `;
+    elements.operatorStatsList.appendChild(item);
+  }
+
+  if (backupError) {
+    const item = document.createElement("li");
+    item.className = "operator-stat-empty";
+    item.textContent = backupError;
+    elements.operatorStatsList.appendChild(item);
+  }
+}
+
 function renderStationMeta(payload) {
   if (payload.stationError) {
     elements.stationMeta.textContent = payload.stationError;
@@ -242,13 +340,21 @@ function renderStationMeta(payload) {
 
   const stations = Array.isArray(payload.stations) ? payload.stations : [];
   const selected = stations.find((station) => `${station.station_id}` === state.selectedStationProfileId);
+  const publicLogbookSlug = payload.config?.publicLogbookSlug || "";
+  const publicLogbookUrl = payload.config?.publicLogbookUrl || "";
+  const publicLogbookHtml =
+    publicLogbookSlug && publicLogbookUrl
+      ? `<br>Public logbook: <a href="${escapeHtml(publicLogbookUrl)}" target="_blank" rel="noreferrer">${escapeHtml(publicLogbookSlug)}</a>`
+      : publicLogbookSlug
+        ? `<br>Public logbook: ${escapeHtml(publicLogbookSlug)}`
+        : "";
 
   if (selected) {
-    elements.stationMeta.textContent = `Station: ${selected.station_profile_name} (${selected.station_callsign})`;
+    elements.stationMeta.innerHTML = `Station: ${escapeHtml(selected.station_profile_name)} (${escapeHtml(selected.station_callsign)})${publicLogbookHtml}`;
     return;
   }
 
-  elements.stationMeta.textContent = "Station profile will be resolved from Cloudlog on submit.";
+  elements.stationMeta.innerHTML = `Station profile will be resolved from Cloudlog on submit.${publicLogbookHtml}`;
 }
 
 async function lookupCallsign(callsign) {
@@ -378,10 +484,16 @@ function updateSubmitAvailability() {
   elements.submitButton.disabled =
     state.isSubmitting ||
     !state.appReady ||
-    state.cloudlogAlreadyLogged;
+    state.cloudlogAlreadyLogged ||
+    !state.selectedOperatorCallsign;
 
   if (state.isSubmitting) {
     elements.submitButton.textContent = "Logging...";
+    return;
+  }
+
+  if (!state.selectedOperatorCallsign) {
+    elements.submitButton.textContent = "Pick operator";
     return;
   }
 
@@ -403,4 +515,22 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll("\"", "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function getStoredPreferredOperator() {
+  try {
+    return normalizeCallsign(window.localStorage.getItem(OPERATOR_STORAGE_KEY) || "");
+  } catch (_error) {
+    return "";
+  }
+}
+
+function storePreferredOperator(operatorCallsign) {
+  try {
+    if (operatorCallsign) {
+      window.localStorage.setItem(OPERATOR_STORAGE_KEY, operatorCallsign);
+    }
+  } catch (_error) {
+    // Ignore storage failures and keep the in-memory value.
+  }
 }
