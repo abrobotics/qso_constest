@@ -88,7 +88,7 @@ async function handleBootstrap(_req, res) {
       publicLogbookUrl: buildPublicLogbookUrl(),
       serialStart: config.serialStart,
       serialPad: config.serialPad,
-      lookupProvider: "hamdb + qrz"
+      lookupProvider: "qrz, hamdb"
     },
     backupCount: backupState.entries.length,
     operatorStats: backupState.operatorStats,

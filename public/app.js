@@ -29,8 +29,9 @@ const elements = {
   lookupDetail: document.querySelector("#lookup-detail"),
   lookupProviderDisplay: document.querySelector("#lookup-provider-display"),
   nextSerialDisplay: document.querySelector("#next-serial-display"),
+  operatorPodium: document.querySelector("#operator-podium"),
+  operatorRestList: document.querySelector("#operator-rest-list"),
   operatorSelect: document.querySelector("#operator-select"),
-  operatorStatsList: document.querySelector("#operator-stats-list"),
   operatorSummary: document.querySelector("#operator-summary"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
@@ -128,7 +129,7 @@ elements.callsignInput.addEventListener("input", () => {
   state.lookupTimer = window.setTimeout(() => {
     lookupCallsign(callsign).catch((error) => {
       setLookupState("Cloudlog", "Error", "error");
-      setExternalState("Callbook", "Error", "error");
+      setExternalState("Callbooks", "Error", "error");
       elements.lookupDetail.textContent = error.message;
     });
   }, 250);
@@ -302,35 +303,48 @@ function renderBackupState(backupCount, operatorStats, backupError = "") {
 }
 
 function renderOperatorStats(operatorStats, backupError = "") {
-  elements.operatorStatsList.innerHTML = "";
+  elements.operatorPodium.innerHTML = "";
+  elements.operatorRestList.innerHTML = "";
 
   if (!operatorStats.length) {
-    const item = document.createElement("li");
-    item.className = "operator-stat-empty";
-    item.textContent = backupError || "Operator stats will appear as soon as the first local backup is written.";
-    elements.operatorStatsList.appendChild(item);
+    const emptyState = document.createElement("div");
+    emptyState.className = "operator-stat-empty";
+    emptyState.textContent = backupError || "Podium will appear as soon as the first local backup is written.";
+    elements.operatorPodium.appendChild(emptyState);
     elements.operatorSummary.textContent = backupError || "No operator activity recorded yet.";
     return;
   }
 
-  const leader = operatorStats[0];
-  elements.operatorSummary.textContent = `${leader.callsign} leads with ${leader.contacts} contacts.`;
+  const podium = operatorStats.slice(0, 3);
+  const remainingOperators = operatorStats.slice(3);
+  elements.operatorSummary.textContent = "Top operators from the local backup log.";
 
-  for (const operator of operatorStats) {
-    const item = document.createElement("li");
-    item.className = "operator-stat-item";
+  for (const [index, operator] of podium.entries()) {
+    const item = document.createElement("article");
+    item.className = `operator-podium-card place-${index + 1}`;
     item.innerHTML = `
+      <span class="operator-podium-rank">#${escapeHtml(String(index + 1))}</span>
       <strong>${escapeHtml(operator.callsign)}</strong>
       <span>${escapeHtml(String(operator.contacts))} QSOs</span>
     `;
-    elements.operatorStatsList.appendChild(item);
+    elements.operatorPodium.appendChild(item);
+  }
+
+  for (const operator of remainingOperators) {
+    const item = document.createElement("li");
+    item.className = "operator-rest-item";
+    item.innerHTML = `
+      <strong>${escapeHtml(operator.callsign)}</strong>
+      <span>${escapeHtml(String(operator.contacts))}</span>
+    `;
+    elements.operatorRestList.appendChild(item);
   }
 
   if (backupError) {
     const item = document.createElement("li");
     item.className = "operator-stat-empty";
     item.textContent = backupError;
-    elements.operatorStatsList.appendChild(item);
+    elements.operatorRestList.appendChild(item);
   }
 }
 
@@ -371,7 +385,7 @@ function renderHeroTitle(payload) {
 async function lookupCallsign(callsign) {
   state.lastLookupValue = callsign;
   setLookupState("Cloudlog", "Checking", "pending");
-  setExternalState("Callbook", "Checking", "pending");
+  setExternalState("Callbooks", "Checking", "pending");
   elements.lookupDetail.textContent = "Looking up callsign...";
 
   const response = await fetch(`/api/lookup?callsign=${encodeURIComponent(callsign)}&band=${encodeURIComponent(state.selectedBand)}`);
@@ -402,11 +416,11 @@ async function lookupCallsign(callsign) {
 
   if (payload.external) {
     if (payload.external.ok && payload.external.found !== false) {
-      setExternalState("Callbook", "Found", "ready");
+      setExternalState("Callbooks", "Found", "ready");
     } else if (payload.external.ok && payload.external.found === false) {
-      setExternalState("Callbook", "Not found", "warn");
+      setExternalState("Callbooks", "Not found", "warn");
     } else {
-      setExternalState("Callbook", "Unavailable", "error");
+      setExternalState("Callbooks", "Unavailable", "error");
     }
   }
 
@@ -435,7 +449,7 @@ function renderFormatState(callsign) {
 function resetLookup(resetValue = true) {
   state.cloudlogAlreadyLogged = false;
   setLookupState("Cloudlog", "Waiting", "pending");
-  setExternalState("Callbook", "Waiting", "pending");
+  setExternalState("Callbooks", "Waiting", "pending");
   elements.lookupDetail.textContent = "Type a callsign to start live lookup.";
   if (resetValue) {
     state.lastLookupValue = "";

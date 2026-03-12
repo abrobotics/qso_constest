@@ -23,7 +23,7 @@
           </div>
           <div class="stat-card">
             <span class="stat-label">Lookup</span>
-            <strong id="lookup-provider-display">hamdb + qrz</strong>
+            <strong id="lookup-provider-display">qrz, hamdb</strong>
           </div>
         </div>
       </header>
@@ -59,7 +59,7 @@
                 <span class="lookup-value" id="cloudlog-status">Waiting</span>
               </div>
               <div class="lookup-row">
-                <span class="lookup-label">Callbook</span>
+                <span class="lookup-label">Callbooks</span>
                 <span class="lookup-value" id="external-status">Waiting</span>
               </div>
               <div class="lookup-detail" id="lookup-detail">Type a callsign to start live lookup.</div>
@@ -110,9 +110,10 @@
               <strong id="backup-status">0 QSOs saved</strong>
             </div>
             <p class="operator-panel-copy" id="operator-summary">
-              Operator stats will appear as soon as backup logging starts.
+              Podium will appear as soon as backup logging starts.
             </p>
-            <ul class="operator-stats-list" id="operator-stats-list"></ul>
+            <div class="operator-podium" id="operator-podium"></div>
+            <ul class="operator-rest-list" id="operator-rest-list"></ul>
           </div>
 
           <ul class="recent-list" id="recent-list"></ul>
