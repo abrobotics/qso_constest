@@ -435,16 +435,7 @@ async function lookupCallsign(callsign) {
 }
 
 async function lookupHamdbCallsignSafe(callsign) {
-  try {
-    return await lookupHamdbCallsign(callsign);
-  } catch (error) {
-    return {
-      provider: "hamdb",
-      ok: false,
-      found: false,
-      message: error.message
-    };
-  }
+  return lookupCallsignCandidates(callsign, "hamdb", (candidate) => lookupHamdbCallsign(candidate));
 }
 
 async function lookupHamdbCallsign(callsign) {
@@ -488,16 +479,63 @@ async function lookupQrzCallsignSafe(callsign) {
     };
   }
 
-  try {
-    return await lookupQrzCallsign(callsign);
-  } catch (error) {
-    return {
-      provider: "qrz",
-      ok: false,
-      found: false,
-      message: error.message
-    };
+  return lookupCallsignCandidates(callsign, "qrz", (candidate) => lookupQrzCallsign(candidate));
+}
+
+async function lookupCallsignCandidates(callsign, provider, lookupFn) {
+  const candidates = buildLookupCandidates(callsign);
+  let fallbackResult = null;
+  let firstError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const result = await lookupFn(candidate);
+      if (result.found === true) {
+        return {
+          ...result,
+          queriedCallsign: callsign,
+          lookedUpCallsign: candidate
+        };
+      }
+
+      if (!fallbackResult) {
+        fallbackResult = {
+          ...result,
+          queriedCallsign: callsign,
+          lookedUpCallsign: candidate
+        };
+      }
+    } catch (error) {
+      if (!firstError) {
+        firstError = error;
+      }
+    }
   }
+
+  if (fallbackResult) {
+    return fallbackResult;
+  }
+
+  return {
+    provider,
+    ok: false,
+    found: false,
+    message: firstError ? firstError.message : `${provider.toUpperCase()} lookup failed`
+  };
+}
+
+function buildLookupCandidates(callsign) {
+  const normalizedCallsign = normalizeCallsign(callsign);
+  const candidates = [normalizedCallsign];
+
+  for (const part of normalizedCallsign.split("/")) {
+    const candidate = normalizeCallsign(part);
+    if (candidate && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates;
 }
 
 async function postCloudlog(pathname, payload) {
