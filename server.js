@@ -1,4 +1,5 @@
 const http = require("http");
+const os = require("os");
 const fs = require("fs/promises");
 const path = require("path");
 const { URL } = require("url");
@@ -10,7 +11,8 @@ const ENV_PATH = path.join(ROOT, ".env");
 loadEnvFile(ENV_PATH);
 
 const config = {
-  port: Number.parseInt(process.env.PORT || "3000", 10),
+  host: (process.env.HOST || "0.0.0.0").trim(),
+  port: Number.parseInt(process.env.PORT || "8001", 10),
   backupLogFile: resolveWorkspacePath(process.env.BACKUP_LOG_FILE || "data/qso-backup.ndjson"),
   cloudlogBaseUrl: normalizeBaseUrl(process.env.CLOUDLOG_BASE_URL || ""),
   cloudlogApiKey: process.env.CLOUDLOG_API_KEY || "",
@@ -68,8 +70,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(config.port, () => {
-  console.log(`QSO contest app listening on http://localhost:${config.port}`);
+server.listen(config.port, config.host, () => {
+  for (const url of buildListenUrls(config.host, config.port)) {
+    console.log(`QSO contest app listening on ${url}`);
+  }
 });
 
 async function handleBootstrap(_req, res) {
@@ -934,6 +938,27 @@ function resolveWorkspacePath(filePath) {
   }
 
   return path.join(ROOT, filePath);
+}
+
+function buildListenUrls(host, port) {
+  const urls = new Set();
+
+  if (host === "0.0.0.0" || host === "::") {
+    urls.add(`http://localhost:${port}`);
+
+    const interfaces = os.networkInterfaces();
+    for (const entries of Object.values(interfaces)) {
+      for (const entry of entries || []) {
+        if (entry.family === "IPv4" && !entry.internal) {
+          urls.add(`http://${entry.address}:${port}`);
+        }
+      }
+    }
+  } else {
+    urls.add(`http://${host}:${port}`);
+  }
+
+  return Array.from(urls);
 }
 
 async function readJson(req) {

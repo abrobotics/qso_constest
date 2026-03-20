@@ -34,6 +34,7 @@ cp .env.example .env
 
 2. Edit `.env` and fill in:
 
+- optionally `HOST=0.0.0.0` to expose the app on your LAN
 - `CLOUDLOG_BASE_URL`
 - `CLOUDLOG_API_KEY`
 - `CLOUDLOG_LOGBOOK_PUBLIC_SLUG`
@@ -48,13 +49,16 @@ cp .env.example .env
 npm start
 ```
 
-4. Open `http://localhost:3000`
+4. Open `http://localhost:8001`
+
+For LAN access, start the app and use one of the `http://<your-lan-ip>:8001` URLs printed in the server log.
 
 ## Notes
 
 - The app keeps Cloudlog credentials on the server side.
 - Local backup is append-only NDJSON so you can inspect or recover QSOs without Cloudlog.
 - Operator stats are calculated from the local backup file, not from Cloudlog.
+- The server binds to `HOST` and prints the reachable LAN URLs at startup. If another device still cannot connect, check your OS firewall for the chosen port.
 - Callsign lookup now tries both HamDB and QRZ for each query.
 - QRZ XML lookup is supported through the documented session flow: first request a session key, then query callsigns with that key.
 - If QRZ credentials are missing or invalid, the app degrades gracefully and keeps using HamDB.
