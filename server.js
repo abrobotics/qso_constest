@@ -89,6 +89,7 @@ async function handleBootstrap(_req, res) {
       defaultMode: config.defaultMode,
       defaultRstSent: config.defaultRstSent,
       defaultRstRcvd: config.defaultRstRcvd,
+      contestId: config.contestId,
       publicLogbookSlug: config.cloudlogLogbookSlug,
       publicLogbookUrl: buildPublicLogbookUrl(),
       serialStart: config.serialStart,

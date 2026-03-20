@@ -21,6 +21,7 @@ const elements = {
   callsignInput: document.querySelector("#callsign-input"),
   cloudlogStatus: document.querySelector("#cloudlog-status"),
   externalStatus: document.querySelector("#external-status"),
+  entryTitle: document.querySelector("#entry-title"),
   formatStatus: document.querySelector("#format-status"),
   form: document.querySelector("#log-form"),
   formMessage: document.querySelector("#form-message"),
@@ -173,6 +174,7 @@ async function bootstrap() {
   renderBackupState(payload.backupCount || 0, state.operatorStats);
   renderNextSerial();
   renderRecentQsos(payload.recentQsos || []);
+  renderEntryTitle();
   renderHeroTitle(payload);
   renderStationMeta(payload);
   renderFormatState("");
@@ -228,6 +230,11 @@ function renderNextSerial() {
   if (!elements.sentSerialInput.value) {
     elements.sentSerialInput.value = padded;
   }
+}
+
+function renderEntryTitle() {
+  const contestId = `${state.config?.contestId || ""}`.trim();
+  elements.entryTitle.textContent = contestId ? `Log ${contestId} QSO` : "Log one QSO";
 }
 
 function renderOperatorOptions(operators, fallbackOperatorCallsign) {
