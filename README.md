@@ -38,6 +38,7 @@ cp .env.example .env
 - `CLOUDLOG_BASE_URL`
 - `CLOUDLOG_API_KEY`
 - `CLOUDLOG_LOGBOOK_PUBLIC_SLUG`
+- optionally `CONTEST_ID` to send an ADIF contest identifier with each QSO
 - optionally `CLOUDLOG_STATION_PROFILE_ID`
 - optionally `DEFAULT_OPERATOR_CALLSIGN` and `OPERATORS`
 - optionally `BACKUP_LOG_FILE`

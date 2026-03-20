@@ -18,6 +18,7 @@ const config = {
   cloudlogApiKey: process.env.CLOUDLOG_API_KEY || "",
   cloudlogLogbookSlug: process.env.CLOUDLOG_LOGBOOK_PUBLIC_SLUG || "",
   cloudlogStationProfileId: process.env.CLOUDLOG_STATION_PROFILE_ID || "",
+  contestId: `${process.env.CONTEST_ID || ""}`.trim(),
   defaultMode: (process.env.DEFAULT_MODE || "SSB").trim().toUpperCase(),
   defaultOperatorCallsign: normalizeCallsign(process.env.DEFAULT_OPERATOR_CALLSIGN || ""),
   defaultRstSent: (process.env.DEFAULT_RST_SENT || "59").trim(),
@@ -200,6 +201,7 @@ async function handleLog(req, res) {
   const adif = buildAdifRecord({
     call: callsign,
     band,
+    contest_id: config.contestId,
     mode: config.defaultMode,
     operator: operatorCallsign,
     qso_date: qsoDate,
