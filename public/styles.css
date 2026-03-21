@@ -341,9 +341,26 @@ input[readonly][data-locked="true"] {
 }
 
 .band-button {
+  display: grid;
+  gap: 2px;
+  min-width: 80px;
   padding: 12px 16px;
   background: rgba(94, 79, 56, 0.08);
   color: var(--ink);
+  text-align: center;
+}
+
+.band-button-band {
+  font-weight: 800;
+}
+
+.band-button-mhz {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.band-button.selected .band-button-mhz {
+  color: rgba(255, 247, 240, 0.82);
 }
 
 .lock-button {

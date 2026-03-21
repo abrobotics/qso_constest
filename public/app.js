@@ -202,7 +202,11 @@ function renderBands(bands) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "band-button";
-    button.textContent = band;
+    const bandLabel = formatBandDisplay(band);
+    button.innerHTML = `
+      <span class="band-button-band">${escapeHtml(bandLabel.band)}</span>
+      <span class="band-button-mhz">${escapeHtml(bandLabel.mhz)}</span>
+    `;
     button.dataset.band = band;
 
     if (band === state.selectedBand) {
@@ -225,6 +229,32 @@ function renderBands(bands) {
 
     elements.bandList.appendChild(button);
   }
+}
+
+function formatBandDisplay(band) {
+  const normalizedBand = `${band || ""}`.trim().toLowerCase();
+  const mhzByBand = {
+    "160m": "1.8 MHz",
+    "80m": "3.5 MHz",
+    "60m": "5 MHz",
+    "40m": "7 MHz",
+    "30m": "10.1 MHz",
+    "20m": "14 MHz",
+    "17m": "18.1 MHz",
+    "15m": "21 MHz",
+    "12m": "24.9 MHz",
+    "10m": "28 MHz",
+    "6m": "50 MHz",
+    "4m": "70 MHz",
+    "2m": "144 MHz",
+    "70cm": "432 MHz",
+    "23cm": "1296 MHz"
+  };
+
+  return {
+    band: band,
+    mhz: mhzByBand[normalizedBand] || `${band} band`
+  };
 }
 
 function renderNextSerial() {
