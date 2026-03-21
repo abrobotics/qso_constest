@@ -1,6 +1,6 @@
 # QSO Contest Logger
 
-Small web app for serial-exchange contest logging into Cloudlog.
+Small web app for serial-only contest logging into Cloudlog.
 
 ## What it does
 

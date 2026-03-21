@@ -211,9 +211,7 @@ async function handleLog(req, res) {
     rst_sent: config.defaultRstSent,
     rst_rcvd: config.defaultRstRcvd,
     stx: String(sentSerialValue),
-    stx_string: sentSerial,
-    srx: stripLeadingZeros(receivedSerialString),
-    srx_string: receivedSerialString
+    srx: stripLeadingZeros(receivedSerialString)
   });
 
   const cloudlogResponse = await postCloudlog("qso", {
@@ -893,7 +891,7 @@ function computeNextSerial(qsos, serialStart) {
   }
 
   const serials = qsos
-    .map((qso) => Number.parseInt(`${qso.stx_string || qso.stx || ""}`, 10))
+    .map((qso) => Number.parseInt(`${qso.stx || ""}`, 10))
     .filter((value) => Number.isFinite(value));
 
   if (serials.length === 0) {

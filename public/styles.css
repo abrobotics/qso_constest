@@ -385,26 +385,37 @@ input[readonly][data-locked="true"] {
 .recent-item {
   display: flex;
   justify-content: space-between;
-  gap: 14px;
+  align-items: baseline;
+  gap: 16px;
   padding: 14px 16px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.62);
   border: 1px solid rgba(79, 61, 33, 0.1);
+  line-height: 1.4;
 }
 
-.recent-item div {
-  display: grid;
-  gap: 4px;
-}
-
-.recent-item strong {
+.recent-call {
   font-size: 1rem;
+  color: var(--ink);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
+.recent-item,
 .recent-item span {
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
   font-size: 0.83rem;
   color: var(--muted);
+}
+
+.recent-meta {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.recent-separator {
+  padding: 0 8px;
 }
 
 .operator-podium {

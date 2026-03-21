@@ -288,15 +288,13 @@ function renderRecentQsos(qsos) {
   for (const qso of qsos) {
     const item = document.createElement("li");
     item.className = "recent-item";
+    const metaParts = [
+      escapeHtml(qso.band || ""),
+      escapeHtml(qso.time || "")
+    ].filter(Boolean);
     item.innerHTML = `
-      <div>
-        <strong>${escapeHtml(qso.callsign || "")}</strong>
-        <span>${escapeHtml(qso.band || "")}</span>
-      </div>
-      <div>
-        <span>${escapeHtml(qso.stx_string || "---")}</span>
-        <span>${escapeHtml(qso.time || "")}</span>
-      </div>
+      <strong class="recent-call">${escapeHtml(qso.callsign || "")}</strong>
+      <span class="recent-meta">${metaParts.join(" <span class=\"recent-separator\">&middot;</span> ")}</span>
     `;
     elements.recentList.appendChild(item);
   }
