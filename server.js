@@ -108,7 +108,7 @@ async function handleBootstrap(_req, res) {
 
   const [stationsResult, recentResult] = await Promise.allSettled([
     fetchStationProfiles(),
-    fetchRecentQsos(20)
+    fetchRecentQsos(5)
   ]);
 
   if (stationsResult.status === "fulfilled") {
@@ -238,7 +238,7 @@ async function handleLog(req, res) {
     .catch((error) => error.message);
 
   const [recent, backupState] = await Promise.all([
-    fetchRecentQsos(20).catch(() => []),
+    fetchRecentQsos(5).catch(() => []),
     readBackupState()
   ]);
 
