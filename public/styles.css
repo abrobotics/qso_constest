@@ -190,6 +190,16 @@ select {
   transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
 }
 
+input[data-duplicate="true"] {
+  background: rgba(159, 47, 39, 0.16);
+  border-color: rgba(159, 47, 39, 0.52);
+}
+
+input[data-duplicate="true"]:focus {
+  border-color: rgba(159, 47, 39, 0.75);
+  box-shadow: 0 0 0 4px rgba(159, 47, 39, 0.16);
+}
+
 input:focus,
 select:focus {
   outline: none;

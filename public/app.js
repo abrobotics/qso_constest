@@ -518,6 +518,7 @@ function updateSubmitAvailability() {
     !state.appReady ||
     state.cloudlogAlreadyLogged ||
     !state.selectedOperatorCallsign;
+  elements.callsignInput.dataset.duplicate = String(state.cloudlogAlreadyLogged);
 
   if (state.isSubmitting) {
     elements.submitButton.textContent = "Logging...";
