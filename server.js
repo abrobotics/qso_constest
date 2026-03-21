@@ -27,7 +27,6 @@ const config = {
     .split(",")
     .map((callsign) => normalizeCallsign(callsign))
     .filter(Boolean),
-  serialStart: Number.parseInt(process.env.SERIAL_START || "1", 10),
   serialPad: Math.max(1, Number.parseInt(process.env.SERIAL_PAD || "3", 10)),
   bands: (process.env.BANDS || "160m,80m,40m,20m,15m,10m")
     .split(",")
@@ -92,11 +91,11 @@ async function handleBootstrap(_req, res) {
       contestId: config.contestId,
       publicLogbookSlug: config.cloudlogLogbookSlug,
       publicLogbookUrl: buildPublicLogbookUrl(),
-      serialStart: config.serialStart,
       serialPad: config.serialPad,
       lookupProvider: "qrz, hamdb"
     },
     backupCount: backupState.entries.length,
+    nextSerial: computeNextSerial(backupState.entries.length),
     operatorStats: backupState.operatorStats,
     operators: resolveOperatorChoices([], backupState, []),
     selectedOperatorCallsign: pickDefaultOperatorCallsign(resolveOperatorChoices([], backupState, []))
@@ -108,7 +107,7 @@ async function handleBootstrap(_req, res) {
 
   const [stationsResult, recentResult] = await Promise.allSettled([
     fetchStationProfiles(),
-    fetchRecentQsos(5)
+    fetchRecentQsos()
   ]);
 
   if (stationsResult.status === "fulfilled") {
@@ -118,11 +117,11 @@ async function handleBootstrap(_req, res) {
   }
 
   if (recentResult.status === "fulfilled") {
-    payload.recentQsos = recentResult.value;
-    payload.nextSerial = computeNextSerial(recentResult.value, config.serialStart);
+    payload.recentQsos = recentResult.value.qsos;
+    Object.assign(payload, buildSerialState(recentResult.value, backupState));
   } else {
     payload.recentError = recentResult.reason.message;
-    payload.nextSerial = config.serialStart;
+    Object.assign(payload, buildSerialState({ qsos: [], count: null }, backupState));
   }
 
   payload.selectedStationProfileId = pickStationProfileId(payload.stations || []);
@@ -238,9 +237,11 @@ async function handleLog(req, res) {
     .catch((error) => error.message);
 
   const [recent, backupState] = await Promise.all([
-    fetchRecentQsos(5).catch(() => []),
+    fetchRecentQsos().catch(() => ({ qsos: [], count: null })),
     readBackupState()
   ]);
+
+  const serialState = buildSerialState(recent, backupState);
 
   return sendJson(res, 200, {
     ok: true,
@@ -249,10 +250,11 @@ async function handleLog(req, res) {
     sentSerial,
     backupCount: backupState.entries.length,
     backupError: backupError || undefined,
+    countWarning: serialState.countWarning || undefined,
     cloudlogResponse,
-    nextSerial: sentSerialValue + 1,
+    nextSerial: serialState.nextSerial,
     operatorStats: backupState.operatorStats,
-    recentQsos: recent
+    recentQsos: recent.qsos
   });
 }
 
@@ -353,12 +355,11 @@ async function fetchStationProfiles() {
   return parseJsonResponse(response, "Unable to fetch station profiles");
 }
 
-async function fetchRecentQsos(limit) {
-  const safeLimit = Math.max(1, Math.min(50, Number.parseInt(`${limit}`, 10) || 10));
-  const endpoint = buildCloudlogUrl(`recent_qsos/${encodeURIComponent(config.cloudlogLogbookSlug)}/${safeLimit}`);
+async function fetchRecentQsos() {
+  const endpoint = buildCloudlogUrl(`recent_qsos/${encodeURIComponent(config.cloudlogLogbookSlug)}/100000`); // Fetch up to 100,000 recent QSOs.
   const response = await fetch(endpoint);
   const data = await parseJsonResponse(response, "Unable to fetch recent QSOs");
-  return normalizeRecentQsoList(data);
+  return normalizeRecentQsoResponse(data);
 }
 
 async function readBackupState() {
@@ -869,36 +870,56 @@ function isCloudlogAlreadyLogged(data) {
   );
 }
 
-function normalizeRecentQsoList(data) {
+function normalizeRecentQsoResponse(data) {
   if (Array.isArray(data)) {
-    return data;
+    return {
+      qsos: data,
+      count: null
+    };
   }
 
   if (Array.isArray(data?.qsos)) {
-    return data.qsos;
+    return {
+      qsos: data.qsos,
+      count: parseRecentQsoCount(data.count)
+    };
   }
 
   if (Array.isArray(data?.data)) {
-    return data.data;
+    return {
+      qsos: data.data,
+      count: parseRecentQsoCount(data.count)
+    };
   }
 
-  return [];
+  return {
+    qsos: [],
+    count: parseRecentQsoCount(data?.count)
+  };
 }
 
-function computeNextSerial(qsos, serialStart) {
-  if (!Array.isArray(qsos) || qsos.length === 0) {
-    return serialStart;
-  }
+function parseRecentQsoCount(value) {
+  const parsed = Number.parseInt(`${value ?? ""}`, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
 
-  const serials = qsos
-    .map((qso) => Number.parseInt(`${qso.stx || ""}`, 10))
-    .filter((value) => Number.isFinite(value));
+function buildSerialState(recentResponse, backupState) {
+  const publicQsoCount = parseRecentQsoCount(recentResponse?.count);
+  const backupCount = Array.isArray(backupState?.entries) ? backupState.entries.length : 0;
+  const totalQsoCount = publicQsoCount ?? backupCount;
 
-  if (serials.length === 0) {
-    return serialStart;
-  }
+  return {
+    nextSerial: computeNextSerial(totalQsoCount),
+    countWarning:
+      publicQsoCount !== null && publicQsoCount !== backupCount
+        ? `Warning: public logbook count is ${publicQsoCount}, but local backup count is ${backupCount}.`
+        : ""
+  };
+}
 
-  return Math.max(...serials, serialStart - 1) + 1;
+function computeNextSerial(totalQsoCount) {
+  const safeCount = Math.max(0, Number.parseInt(`${totalQsoCount || 0}`, 10) || 0);
+  return safeCount + 1;
 }
 
 function buildAdifRecord(fields) {

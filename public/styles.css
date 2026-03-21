@@ -277,6 +277,26 @@ input[readonly][data-locked="true"] {
   background: rgba(255, 244, 217, 0.62);
 }
 
+.count-warning {
+  margin-top: 18px;
+  padding: 18px 20px;
+  border: 2px solid rgba(159, 47, 39, 0.34);
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg, rgba(255, 234, 230, 0.98), rgba(250, 205, 188, 0.92)),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(159, 47, 39, 0.06) 0,
+      rgba(159, 47, 39, 0.06) 12px,
+      transparent 12px,
+      transparent 24px
+    );
+  color: var(--danger);
+  font-weight: 800;
+  line-height: 1.5;
+  box-shadow: 0 18px 34px rgba(159, 47, 39, 0.14);
+}
+
 .operator-panel-head {
   display: flex;
   justify-content: space-between;

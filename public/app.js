@@ -27,6 +27,7 @@ const elements = {
   formMessage: document.querySelector("#form-message"),
   backupStatus: document.querySelector("#backup-status"),
   heroTitle: document.querySelector("#hero-title"),
+  countWarning: document.querySelector("#count-warning"),
   lookupDetail: document.querySelector("#lookup-detail"),
   lookupProviderDisplay: document.querySelector("#lookup-provider-display"),
   nextSerialDisplay: document.querySelector("#next-serial-display"),
@@ -98,6 +99,7 @@ elements.form.addEventListener("submit", async (event) => {
     state.operatorStats = payload.operatorStats || [];
     renderNextSerial();
     renderBackupState(payload.backupCount, state.operatorStats, payload.backupError);
+    renderCountWarning(payload.countWarning || "");
     renderRecentQsos(payload.recentQsos || []);
     elements.callsignInput.value = "";
     elements.receivedSerialInput.value = "";
@@ -163,7 +165,7 @@ async function bootstrap() {
   }
 
   state.config = payload.config;
-  state.nextSerial = payload.nextSerial || payload.config.serialStart;
+  state.nextSerial = payload.nextSerial || 1;
   state.operatorStats = payload.operatorStats || [];
   state.selectedStationProfileId = payload.selectedStationProfileId || "";
   state.selectedBand = payload.config.bands[0] || "";
@@ -172,6 +174,7 @@ async function bootstrap() {
   renderBands(payload.config.bands);
   renderOperatorOptions(payload.operators || [], payload.selectedOperatorCallsign || "");
   renderBackupState(payload.backupCount || 0, state.operatorStats);
+  renderCountWarning(payload.countWarning || "");
   renderNextSerial();
   renderRecentQsos(payload.recentQsos || []);
   renderEntryTitle();
@@ -276,8 +279,9 @@ function renderOperatorOptions(operators, fallbackOperatorCallsign) {
 
 function renderRecentQsos(qsos) {
   elements.recentList.innerHTML = "";
+  const recentQsos = Array.isArray(qsos) ? qsos.slice(0, 5) : [];
 
-  if (!qsos.length) {
+  if (!recentQsos.length) {
     const item = document.createElement("li");
     item.className = "recent-empty";
     item.textContent = "No recent QSOs returned by Cloudlog yet.";
@@ -285,7 +289,7 @@ function renderRecentQsos(qsos) {
     return;
   }
 
-  for (const qso of qsos) {
+  for (const qso of recentQsos) {
     const item = document.createElement("li");
     item.className = "recent-item";
     const metaParts = [
@@ -305,6 +309,12 @@ function renderBackupState(backupCount, operatorStats, backupError = "") {
   elements.backupStatus.textContent = `${count} QSOs saved`;
   state.operatorStats = Array.isArray(operatorStats) ? operatorStats : [];
   renderOperatorStats(state.operatorStats, backupError);
+}
+
+function renderCountWarning(message) {
+  const warning = `${message || ""}`.trim();
+  elements.countWarning.hidden = !warning;
+  elements.countWarning.textContent = warning;
 }
 
 function renderOperatorStats(operatorStats, backupError = "") {

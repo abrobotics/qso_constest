@@ -10,6 +10,7 @@ Small web app for serial-only contest logging into Cloudlog.
 - Runs a live callsign lookup through HamDB or QRZ.
 - Lets the operator choose the current operator callsign and shows a local operator leaderboard.
 - Shows recent QSOs and pre-fills the next sent serial.
+- Derives the next sent serial from the public logbook count, with local backup fallback when the slug count is unavailable.
 
 ## Cloudlog APIs used
 
