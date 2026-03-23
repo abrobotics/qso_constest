@@ -154,6 +154,17 @@ async function handleLookup(_req, res, url) {
 
   if (cloudlogResult.status === "fulfilled") {
     response.cloudlog = summarizeCloudlogLookup(cloudlogResult.value);
+
+    if (response.cloudlog?.ok && response.cloudlog.workedBefore) {
+      const recentResponse = await fetchRecentQsos().catch(() => null);
+      const matchedQso = findRecentQsoByCallsign(recentResponse?.qsos || [], callsign, band);
+      if (matchedQso?.time) {
+        response.cloudlog.loggedQsoTime = matchedQso.time;
+      }
+      if (matchedQso?.date) {
+        response.cloudlog.loggedQsoDate = matchedQso.date;
+      }
+    }
   } else if (cloudlogResult.status === "rejected") {
     response.cloudlog = { ok: false, message: cloudlogResult.reason.message };
   }
@@ -896,6 +907,21 @@ function normalizeRecentQsoResponse(data) {
     qsos: [],
     count: parseRecentQsoCount(data?.count)
   };
+}
+
+function findRecentQsoByCallsign(qsos, callsign, band) {
+  const normalizedCallsign = normalizeCallsign(callsign);
+  const normalizedBand = `${band || ""}`.trim().toLowerCase();
+
+  const exactBandMatch = qsos.find((qso) =>
+    normalizeCallsign(qso.callsign || "") === normalizedCallsign &&
+    `${qso.band || ""}`.trim().toLowerCase() === normalizedBand
+  );
+  if (exactBandMatch) {
+    return exactBandMatch;
+  }
+
+  return qsos.find((qso) => normalizeCallsign(qso.callsign || "") === normalizedCallsign) || null;
 }
 
 function parseRecentQsoCount(value) {

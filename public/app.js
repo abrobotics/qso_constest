@@ -442,12 +442,19 @@ async function lookupCallsign(callsign) {
     if (payload.cloudlog.ok) {
       const cloudlogResult = `${payload.cloudlog.raw?.result || ""}`.trim().toLowerCase();
       const alreadyLogged = cloudlogResult === "found";
+      const loggedQsoAt = alreadyLogged
+        ? formatCloudlogLoggedAt(payload.cloudlog.loggedQsoDate, payload.cloudlog.loggedQsoTime)
+        : "";
       state.cloudlogAlreadyLogged = alreadyLogged;
       updateSubmitAvailability();
 
       setLookupState(
         "Cloudlog",
-        alreadyLogged ? "Already logged" : "New",
+        alreadyLogged
+          ? loggedQsoAt
+            ? `Already logged ${loggedQsoAt}`
+            : "Already logged"
+          : "New",
         alreadyLogged ? "warn" : "ready"
       );
     } else {
@@ -575,6 +582,25 @@ function normalizeCallsign(value) {
 
 function digitsOnly(value) {
   return value.replace(/\D+/g, "");
+}
+
+function formatCloudlogLoggedAt(dateValue, timeValue) {
+  const rawDate = `${dateValue || ""}`.trim();
+  const rawTime = `${timeValue || ""}`.trim();
+
+  if (!rawDate && !rawTime) {
+    return "";
+  }
+
+  let formattedDate = "";
+  const match = rawDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    formattedDate = `${match[2]}/${match[3]}`;
+  } else if (rawDate) {
+    formattedDate = rawDate;
+  }
+
+  return [formattedDate, rawTime].filter(Boolean).join(" ");
 }
 
 function escapeHtml(value) {
