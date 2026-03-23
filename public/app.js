@@ -260,9 +260,7 @@ function formatBandDisplay(band) {
 function renderNextSerial() {
   const padded = String(state.nextSerial).padStart(state.config.serialPad, "0");
   elements.nextSerialDisplay.textContent = padded;
-  if (!elements.sentSerialInput.value) {
-    elements.sentSerialInput.value = padded;
-  }
+  elements.sentSerialInput.value = padded;
 }
 
 function renderEntryTitle() {
