@@ -233,6 +233,7 @@ async function handleLog(req, res) {
     call: callsign,
     band,
     contest_id: config.contestId,
+    freq: defaultFrequencyForBand(band),
     mode: config.defaultMode,
     operator: operatorCallsign,
     qso_date: qsoDate,
@@ -1073,6 +1074,28 @@ function buildSerialState(recentResponse, backupState) {
 function computeNextSerial(totalQsoCount) {
   const safeCount = Math.max(0, Number.parseInt(`${totalQsoCount || 0}`, 10) || 0);
   return safeCount + 1;
+}
+
+function defaultFrequencyForBand(band) {
+  const defaults = {
+    "160m": "1.838",
+    "80m": "3.583",
+    "60m": "5.330",
+    "40m": "7.040",
+    "30m": "10.145",
+    "20m": "14.080",
+    "17m": "18.105",
+    "15m": "21.080",
+    "12m": "24.925",
+    "10m": "28.120",
+    "6m": "50.230",
+    "4m": "70.200",
+    "2m": "144.370",
+    "70cm": "432.088",
+    "23cm": "1296.138"
+  };
+
+  return defaults[`${band || ""}`.trim().toLowerCase()] || "";
 }
 
 function buildAdifRecord(fields) {
