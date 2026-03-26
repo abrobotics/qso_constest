@@ -224,6 +224,7 @@ async function handleLog(req, res) {
     });
   }
 
+  const radioFrequency = await readRadioFrequencyState().catch(() => null);
   const sentSerial = String(sentSerialValue).padStart(config.serialPad, "0");
   const receivedSerialString = receivedSerial.padStart(config.serialPad, "0");
   const now = new Date();
@@ -233,7 +234,7 @@ async function handleLog(req, res) {
     call: callsign,
     band,
     contest_id: config.contestId,
-    freq: defaultFrequencyForBand(band),
+    freq: resolveAdifFrequency(band, radioFrequency),
     mode: config.defaultMode,
     operator: operatorCallsign,
     qso_date: qsoDate,
@@ -1096,6 +1097,18 @@ function defaultFrequencyForBand(band) {
   };
 
   return defaults[`${band || ""}`.trim().toLowerCase()] || "";
+}
+
+function resolveAdifFrequency(band, radioFrequencyState) {
+  const normalizedBand = `${band || ""}`.trim().toLowerCase();
+  const liveBand = `${radioFrequencyState?.band || ""}`.trim().toLowerCase();
+  const liveFrequency = radioFrequencyState?.frequencyMhz;
+
+  if (radioFrequencyState?.ok && Number.isFinite(liveFrequency) && liveBand === normalizedBand) {
+    return liveFrequency.toFixed(3);
+  }
+
+  return defaultFrequencyForBand(band);
 }
 
 function buildAdifRecord(fields) {
