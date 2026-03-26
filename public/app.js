@@ -1,4 +1,5 @@
 const OPERATOR_STORAGE_KEY = "qso-contest-operator";
+const OPERATOR_STATS_VISIBILITY_KEY = "qso-contest-operator-stats-visible";
 
 const state = {
   appReady: false,
@@ -7,6 +8,7 @@ const state = {
   isSubmitting: false,
   nextSerial: 1,
   operatorStats: [],
+  operatorStatsVisible: getStoredOperatorStatsVisibility(),
   selectedBand: "",
   selectedOperatorCallsign: "",
   selectedStationProfileId: "",
@@ -34,6 +36,9 @@ const elements = {
   operatorPodium: document.querySelector("#operator-podium"),
   operatorRestList: document.querySelector("#operator-rest-list"),
   operatorSelect: document.querySelector("#operator-select"),
+  operatorStatsSection: document.querySelector("#operator-stats-section"),
+  operatorStatsToggle: document.querySelector("#operator-stats-toggle"),
+  operatorStatsToggleText: document.querySelector("#operator-stats-toggle-text"),
   operatorSummary: document.querySelector("#operator-summary"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
@@ -42,6 +47,14 @@ const elements = {
   stationMeta: document.querySelector("#station-meta"),
   submitButton: document.querySelector("#submit-button")
 };
+
+elements.operatorStatsToggle.addEventListener("change", () => {
+  state.operatorStatsVisible = elements.operatorStatsToggle.checked;
+  storeOperatorStatsVisibility(state.operatorStatsVisible);
+  applyOperatorStatsVisibility();
+});
+
+applyOperatorStatsVisibility();
 
 bootstrap().catch((error) => {
   setAppStatus("Config error", "error");
@@ -582,6 +595,30 @@ function normalizeCallsign(value) {
 
 function digitsOnly(value) {
   return value.replace(/\D+/g, "");
+}
+
+function getStoredOperatorStatsVisibility() {
+  try {
+    const stored = window.localStorage.getItem(OPERATOR_STATS_VISIBILITY_KEY);
+    return stored === null ? true : stored === "true";
+  } catch (_error) {
+    return true;
+  }
+}
+
+function storeOperatorStatsVisibility(isVisible) {
+  try {
+    window.localStorage.setItem(OPERATOR_STATS_VISIBILITY_KEY, isVisible ? "true" : "false");
+  } catch (_error) {
+    // Ignore storage failures and keep the in-memory value.
+  }
+}
+
+function applyOperatorStatsVisibility() {
+  const isVisible = state.operatorStatsVisible !== false;
+  elements.operatorStatsToggle.checked = isVisible;
+  elements.operatorStatsSection.hidden = !isVisible;
+  elements.operatorStatsToggleText.textContent = isVisible ? "Hide stats" : "Show stats";
 }
 
 function formatCloudlogLoggedAt(dateValue, timeValue) {

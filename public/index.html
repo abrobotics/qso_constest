@@ -111,11 +111,20 @@
               <span>Local backup</span>
               <strong id="backup-status">0 QSOs saved</strong>
             </div>
-            <p class="operator-panel-copy" id="operator-summary">
-              Podium will appear as soon as backup logging starts.
-            </p>
-            <div class="operator-podium" id="operator-podium"></div>
-            <ul class="operator-rest-list" id="operator-rest-list"></ul>
+            <div class="operator-panel-controls">
+              <label class="operator-stats-toggle" for="operator-stats-toggle">
+                <input id="operator-stats-toggle" type="checkbox" checked>
+                <span class="operator-stats-slider" aria-hidden="true"></span>
+                <span class="operator-stats-toggle-text" id="operator-stats-toggle-text">Hide stats</span>
+              </label>
+            </div>
+            <div class="operator-stats-section" id="operator-stats-section">
+              <p class="operator-panel-copy" id="operator-summary">
+                Podium will appear as soon as backup logging starts.
+              </p>
+              <div class="operator-podium" id="operator-podium"></div>
+              <ul class="operator-rest-list" id="operator-rest-list"></ul>
+            </div>
           </div>
 
           <ul class="recent-list" id="recent-list"></ul>
