@@ -1,6 +1,6 @@
 {
   "name": "qso-constest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Simple Cloudlog-backed QSO contest logger",
   "scripts": {

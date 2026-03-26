@@ -10,7 +10,11 @@ const ENV_PATH = path.join(ROOT, ".env");
 
 loadEnvFile(ENV_PATH);
 
+const appVersion = `${process.env.APP_VERSION || "x.x.x"}`.trim() || "x.x.x";
+const configuredRadioFrequencyFile = `${process.env.RADIO_FREQUENCY_FILE || ""}`.trim();
+
 const config = {
+  appVersion,
   host: (process.env.HOST || "0.0.0.0").trim(),
   port: Number.parseInt(process.env.PORT || "8001", 10),
   backupLogFile: resolveWorkspacePath(process.env.BACKUP_LOG_FILE || "data/qso-backup.ndjson"),
@@ -32,7 +36,10 @@ const config = {
     .split(",")
     .map((band) => band.trim())
     .filter(Boolean),
-  qrzAgent: (process.env.QRZ_AGENT || "qso_constest/0.1.0").trim(),
+  radioFrequencyFile: configuredRadioFrequencyFile
+    ? resolveWorkspacePath(configuredRadioFrequencyFile)
+    : "",
+  qrzAgent: (process.env.QRZ_AGENT || `qso_constest/${appVersion}`).trim(),
   qrzPassword: process.env.QRZ_PASSWORD || "",
   qrzUsername: process.env.QRZ_USERNAME || ""
 };
@@ -59,6 +66,10 @@ const server = http.createServer(async (req, res) => {
       return handleLog(req, res);
     }
 
+    if (url.pathname === "/api/radio_frequency" && req.method === "GET") {
+      return handleRadioFrequency(req, res);
+    }
+
     if (req.method === "GET") {
       return serveStatic(req, res, url.pathname);
     }
@@ -78,7 +89,10 @@ server.listen(config.port, config.host, () => {
 
 async function handleBootstrap(_req, res) {
   const issues = validateBaseConfig();
-  const backupState = await readBackupState();
+  const [backupState, radioFrequency] = await Promise.all([
+    readBackupState(),
+    readRadioFrequencyState()
+  ]);
   const payload = {
     ready: issues.length === 0,
     issues,
@@ -91,6 +105,7 @@ async function handleBootstrap(_req, res) {
       contestId: config.contestId,
       publicLogbookSlug: config.cloudlogLogbookSlug,
       publicLogbookUrl: buildPublicLogbookUrl(),
+      radioFrequencyConfigured: Boolean(config.radioFrequencyFile),
       serialPad: config.serialPad,
       lookupProvider: "qrz, hamdb"
     },
@@ -98,6 +113,7 @@ async function handleBootstrap(_req, res) {
     nextSerial: computeNextSerial(backupState.entries.length),
     operatorStats: backupState.operatorStats,
     operators: resolveOperatorChoices([], backupState, []),
+    radioFrequency,
     selectedOperatorCallsign: pickDefaultOperatorCallsign(resolveOperatorChoices([], backupState, []))
   };
 
@@ -128,6 +144,10 @@ async function handleBootstrap(_req, res) {
   payload.operators = resolveOperatorChoices(payload.stations || [], backupState, payload.recentQsos || []);
   payload.selectedOperatorCallsign = pickDefaultOperatorCallsign(payload.operators);
   return sendJson(res, 200, payload);
+}
+
+async function handleRadioFrequency(_req, res) {
+  return sendJson(res, 200, await readRadioFrequencyState());
 }
 
 async function handleLookup(_req, res, url) {
@@ -409,6 +429,86 @@ async function appendBackupRecord(record) {
   await fs.appendFile(config.backupLogFile, `${JSON.stringify(record)}\n`, "utf8");
 }
 
+async function readRadioFrequencyState() {
+  if (!config.radioFrequencyFile) {
+    return {
+      configured: false,
+      ok: false,
+      errorDetected: false,
+      display: "Unavailable",
+      message: "Set RADIO_FREQUENCY_FILE to enable live rig frequency.",
+      frequencyMhz: null,
+      band: ""
+    };
+  }
+
+  try {
+    const raw = await fs.readFile(config.radioFrequencyFile, "utf8");
+    const trimmed = raw.trim();
+
+    if (!trimmed) {
+      return {
+        configured: true,
+        ok: false,
+        errorDetected: false,
+        display: "Unavailable",
+        message: "Radio frequency file is empty.",
+        frequencyMhz: null,
+        band: ""
+      };
+    }
+
+    if (trimmed.startsWith("#")) {
+      return {
+        configured: true,
+        ok: false,
+        errorDetected: true,
+        display: "Rig error",
+        message: trimmed.slice(1).trim() || "Radio frequency source reported an error.",
+        frequencyMhz: null,
+        band: ""
+      };
+    }
+
+    const normalized = trimmed.replace(",", ".");
+    const frequencyMhz = Number.parseFloat(normalized);
+    if (!Number.isFinite(frequencyMhz) || frequencyMhz <= 0) {
+      return {
+        configured: true,
+        ok: false,
+        errorDetected: false,
+        display: "Invalid",
+        message: `Radio frequency "${trimmed}" is not a valid MHz value.`,
+        frequencyMhz: null,
+        band: ""
+      };
+    }
+
+    return {
+      configured: true,
+      ok: true,
+      errorDetected: false,
+      display: `${trimmed} MHz`,
+      message: "Live rig frequency loaded.",
+      frequencyMhz,
+      band: detectBandFromFrequency(frequencyMhz)
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      ok: false,
+      errorDetected: false,
+      display: "Read error",
+      message:
+        error.code === "ENOENT"
+          ? `Radio frequency file not found: ${path.basename(config.radioFrequencyFile)}`
+          : `Unable to read radio frequency: ${error.message}`,
+      frequencyMhz: null,
+      band: ""
+    };
+  }
+}
+
 function buildOperatorStats(entries) {
   const counts = new Map();
 
@@ -424,6 +524,33 @@ function buildOperatorStats(entries) {
   return Array.from(counts.entries())
     .map(([callsign, contacts]) => ({ callsign, contacts }))
     .sort((left, right) => right.contacts - left.contacts || left.callsign.localeCompare(right.callsign));
+}
+
+function detectBandFromFrequency(frequencyMhz) {
+  const ranges = [
+    { band: "160m", min: 1.8, max: 2 },
+    { band: "80m", min: 3.5, max: 4 },
+    { band: "60m", min: 5.06, max: 5.45 },
+    { band: "40m", min: 7, max: 7.3 },
+    { band: "30m", min: 10.1, max: 10.15 },
+    { band: "20m", min: 14, max: 14.35 },
+    { band: "17m", min: 18.068, max: 18.168 },
+    { band: "15m", min: 21, max: 21.45 },
+    { band: "12m", min: 24.89, max: 24.99 },
+    { band: "10m", min: 28, max: 29.7 },
+    { band: "6m", min: 50, max: 54 },
+    { band: "4m", min: 70, max: 70.5 },
+    { band: "2m", min: 144, max: 148 },
+    { band: "70cm", min: 430, max: 440 },
+    { band: "23cm", min: 1240, max: 1300 }
+  ];
+
+  const match = ranges.find(({ min, max }) => frequencyMhz >= min && frequencyMhz <= max);
+  if (!match) {
+    return "";
+  }
+
+  return config.bands.some((band) => band.trim().toLowerCase() === match.band) ? match.band : "";
 }
 
 async function checkCloudlogCallsign(callsign, band) {
@@ -452,7 +579,7 @@ async function lookupHamdbCallsign(callsign) {
   const endpoint = `https://api.hamdb.org/${encodeURIComponent(callsign)}/json/qso_constest`;
   const response = await fetch(endpoint, {
     headers: {
-      "User-Agent": "qso-constest/0.1.0"
+      "User-Agent": config.qrzAgent
     }
   });
   const data = await parseJsonResponse(response, "HamDB lookup failed");

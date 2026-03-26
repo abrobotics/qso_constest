@@ -9,6 +9,7 @@ Small web app for serial-only contest logging into Cloudlog.
 - Checks the current callsign against Cloudlog with `logbook_check_callsign`.
 - Runs a live callsign lookup through HamDB or QRZ.
 - Lets the operator choose the current operator callsign and shows a local operator leaderboard.
+- Polls an optional local frequency file and can auto-select the band from the live rig frequency.
 - Shows recent QSOs and pre-fills the next sent serial.
 - Derives the next sent serial from the public logbook count, with local backup fallback when the slug count is unavailable.
 
@@ -36,6 +37,7 @@ cp .env.example .env
 2. Edit `.env` and fill in:
 
 - optionally `HOST=0.0.0.0` to expose the app on your LAN
+- optionally `APP_VERSION` to set the app version used in defaults such as the QRZ agent string
 - `CLOUDLOG_BASE_URL`
 - `CLOUDLOG_API_KEY`
 - `CLOUDLOG_LOGBOOK_PUBLIC_SLUG`
@@ -43,6 +45,7 @@ cp .env.example .env
 - optionally `CLOUDLOG_STATION_PROFILE_ID`
 - optionally `DEFAULT_OPERATOR_CALLSIGN` and `OPERATORS`
 - optionally `BACKUP_LOG_FILE`
+- optionally `RADIO_FREQUENCY_FILE`
 - optionally `QRZ_USERNAME`, `QRZ_PASSWORD`, and `QRZ_AGENT`
 
 3. Start the app:
@@ -60,6 +63,9 @@ For LAN access, start the app and use one of the `http://<your-lan-ip>:8001` URL
 - The app keeps Cloudlog credentials on the server side.
 - Local backup is append-only NDJSON so you can inspect or recover QSOs without Cloudlog.
 - Operator stats are calculated from the local backup file, not from Cloudlog.
+- If `RADIO_FREQUENCY_FILE` is set, the server reads that file as a live MHz value such as `14.350` and the frontend can auto-select the matching band.
+- If the frequency file content starts with `#`, the app treats it as a rig read error, shows that error in the UI, and turns off auto band selection.
+- If `QRZ_AGENT` is omitted, the app now defaults it to `qso_constest/<APP_VERSION>`.
 - The server binds to `HOST` and prints the reachable LAN URLs at startup. If another device still cannot connect, check your OS firewall for the chosen port.
 - Callsign lookup now tries both HamDB and QRZ for each query.
 - QRZ XML lookup is supported through the documented session flow: first request a session key, then query callsigns with that key.

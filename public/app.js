@@ -3,12 +3,17 @@ const OPERATOR_STATS_VISIBILITY_KEY = "qso-contest-operator-stats-visible";
 
 const state = {
   appReady: false,
+  autoBandEnabled: false,
+  autoBandLockActive: false,
   cloudlogAlreadyLogged: false,
   config: null,
   isSubmitting: false,
   nextSerial: 1,
   operatorStats: [],
   operatorStatsVisible: getStoredOperatorStatsVisibility(),
+  radioBand: "",
+  radioFrequencyDisplay: "",
+  radioFrequencyPollTimer: null,
   selectedBand: "",
   selectedOperatorCallsign: "",
   selectedStationProfileId: "",
@@ -24,6 +29,8 @@ const elements = {
   cloudlogStatus: document.querySelector("#cloudlog-status"),
   externalStatus: document.querySelector("#external-status"),
   entryTitle: document.querySelector("#entry-title"),
+  autoBandToggle: document.querySelector("#auto-band-toggle"),
+  autoBandToggleText: document.querySelector("#auto-band-toggle-text"),
   formatStatus: document.querySelector("#format-status"),
   form: document.querySelector("#log-form"),
   formMessage: document.querySelector("#form-message"),
@@ -40,6 +47,9 @@ const elements = {
   operatorStatsToggle: document.querySelector("#operator-stats-toggle"),
   operatorStatsToggleText: document.querySelector("#operator-stats-toggle-text"),
   operatorSummary: document.querySelector("#operator-summary"),
+  radioFrequencyDisplay: document.querySelector("#radio-frequency-display"),
+  radioFrequencyMeta: document.querySelector("#radio-frequency-meta"),
+  frequencyPanel: document.querySelector("#frequency-panel"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
   sentSerialLockButton: document.querySelector("#sent-serial-lock-button"),
@@ -52,6 +62,15 @@ elements.operatorStatsToggle.addEventListener("change", () => {
   state.operatorStatsVisible = elements.operatorStatsToggle.checked;
   storeOperatorStatsVisibility(state.operatorStatsVisible);
   applyOperatorStatsVisibility();
+});
+
+elements.autoBandToggle.addEventListener("change", () => {
+  state.autoBandEnabled = elements.autoBandToggle.checked;
+  applyAutoBandToggleState();
+
+  if (state.autoBandEnabled && state.radioBand) {
+    setSelectedBand(state.radioBand, { force: true });
+  }
 });
 
 applyOperatorStatsVisibility();
@@ -181,7 +200,8 @@ async function bootstrap() {
   state.nextSerial = payload.nextSerial || 1;
   state.operatorStats = payload.operatorStats || [];
   state.selectedStationProfileId = payload.selectedStationProfileId || "";
-  state.selectedBand = payload.config.bands[0] || "";
+  state.selectedBand = payload.config.radioFrequencyConfigured ? "" : payload.config.bands[0] || "";
+  state.autoBandEnabled = Boolean(payload.config.radioFrequencyConfigured);
 
   elements.lookupProviderDisplay.textContent = payload.config.lookupProvider;
   renderBands(payload.config.bands);
@@ -193,8 +213,14 @@ async function bootstrap() {
   renderEntryTitle();
   renderHeroTitle(payload);
   renderStationMeta(payload);
+  renderRadioFrequency(payload.radioFrequency || null);
   renderFormatState("");
   setSentSerialLocked(true);
+  applyAutoBandToggleState();
+
+  if (payload.config.radioFrequencyConfigured) {
+    startRadioFrequencyPolling();
+  }
 
   if (payload.ready) {
     state.appReady = true;
@@ -227,17 +253,7 @@ function renderBands(bands) {
     }
 
     button.addEventListener("click", () => {
-      state.selectedBand = band;
-      state.cloudlogAlreadyLogged = false;
-      updateSubmitAvailability();
-      for (const sibling of elements.bandList.querySelectorAll(".band-button")) {
-        sibling.classList.toggle("selected", sibling.dataset.band === band);
-      }
-
-      const callsign = normalizeCallsign(elements.callsignInput.value);
-      if (callsign.length >= 3) {
-        lookupCallsign(callsign).catch(() => {});
-      }
+      setSelectedBand(band);
     });
 
     elements.bandList.appendChild(button);
@@ -279,6 +295,62 @@ function renderNextSerial() {
 function renderEntryTitle() {
   const contestId = `${state.config?.contestId || ""}`.trim();
   elements.entryTitle.textContent = contestId ? `Log ${contestId} QSO` : "Log one QSO";
+}
+
+function renderRadioFrequency(radioFrequency) {
+  const configured = Boolean(state.config?.radioFrequencyConfigured);
+  const payload = radioFrequency || {};
+  const autoBandWasEnabled = state.autoBandEnabled;
+  const previousRadioBand = state.radioBand;
+  const previouslyLockable = state.autoBandLockActive;
+  state.radioBand = payload.ok ? `${payload.band || ""}`.trim() : "";
+  state.radioFrequencyDisplay = payload.ok ? `${payload.display || ""}`.trim() : "";
+  state.autoBandLockActive = Boolean(payload.ok && payload.band);
+
+  if (!configured) {
+    elements.frequencyPanel.dataset.tone = "pending";
+    elements.radioFrequencyDisplay.textContent = "Unavailable";
+    elements.radioFrequencyMeta.textContent = "Set RADIO_FREQUENCY_FILE to enable live rig frequency.";
+    state.autoBandEnabled = false;
+    applyAutoBandToggleState();
+    return;
+  }
+
+  if (payload.ok) {
+    elements.frequencyPanel.dataset.tone = payload.band ? "ready" : "warn";
+    elements.radioFrequencyDisplay.textContent = payload.display || "Live";
+    elements.radioFrequencyMeta.textContent = payload.band
+      ? `Detected band ${payload.band}.`
+      : "Frequency is outside the configured amateur band map.";
+
+    if (state.autoBandEnabled && payload.band) {
+      setSelectedBand(payload.band, { force: true, lookupWhenUnchanged: false });
+    } else if (
+      state.autoBandEnabled &&
+      !payload.band &&
+      (previouslyLockable || resolveConfiguredBand(previousRadioBand) === state.selectedBand)
+    ) {
+      clearSelectedBand();
+    }
+
+    applyAutoBandToggleState();
+    return;
+  }
+
+  elements.frequencyPanel.dataset.tone = payload.errorDetected ? "error" : "warn";
+  elements.radioFrequencyDisplay.textContent = payload.display || "Unavailable";
+  elements.radioFrequencyMeta.textContent = payload.message || "Unable to load live rig frequency.";
+  state.autoBandLockActive = false;
+
+  if (payload.errorDetected && autoBandWasEnabled) {
+    clearSelectedBand();
+  }
+
+  if (payload.errorDetected && autoBandWasEnabled) {
+    state.autoBandEnabled = false;
+  }
+
+  applyAutoBandToggleState();
 }
 
 function renderOperatorOptions(operators, fallbackOperatorCallsign) {
@@ -404,6 +476,16 @@ function renderOperatorStats(operatorStats, backupError = "") {
   }
 }
 
+function startRadioFrequencyPolling() {
+  if (state.radioFrequencyPollTimer) {
+    window.clearInterval(state.radioFrequencyPollTimer);
+  }
+
+  state.radioFrequencyPollTimer = window.setInterval(() => {
+    pollRadioFrequency().catch((_error) => {});
+  }, 500);
+}
+
 function renderStationMeta(payload) {
   if (payload.stationError) {
     elements.stationMeta.textContent = payload.stationError;
@@ -499,6 +581,17 @@ async function lookupCallsign(callsign) {
   elements.lookupDetail.textContent = detailParts.join(" · ");
 }
 
+async function pollRadioFrequency() {
+  const response = await fetch("/api/radio_frequency", { cache: "no-store" });
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Unable to fetch radio frequency");
+  }
+
+  renderRadioFrequency(payload);
+}
+
 function renderFormatState(callsign) {
   if (!callsign) {
     updateLookupCell(elements.formatStatus, "Waiting", "pending");
@@ -553,6 +646,55 @@ function setSubmitting(isSubmitting) {
   updateSubmitAvailability();
 }
 
+function setSelectedBand(nextBand, options = {}) {
+  if (!options.force && isBandSelectionLocked()) {
+    return;
+  }
+
+  const resolvedBand = resolveConfiguredBand(nextBand);
+  if (!resolvedBand) {
+    return;
+  }
+
+  const changed = resolvedBand !== state.selectedBand;
+  if (!changed && !options.lookupWhenUnchanged) {
+    return;
+  }
+
+  state.selectedBand = resolvedBand;
+
+  if (changed) {
+    state.cloudlogAlreadyLogged = false;
+    updateSubmitAvailability();
+  }
+
+  for (const sibling of elements.bandList.querySelectorAll(".band-button")) {
+    sibling.classList.toggle("selected", sibling.dataset.band === resolvedBand);
+  }
+
+  const shouldLookup = changed || options.lookupWhenUnchanged;
+  if (!shouldLookup) {
+    return;
+  }
+
+  const callsign = normalizeCallsign(elements.callsignInput.value);
+  if (callsign.length >= 3) {
+    lookupCallsign(callsign).catch(() => {});
+  }
+}
+
+function clearSelectedBand() {
+  state.selectedBand = "";
+  state.cloudlogAlreadyLogged = false;
+
+  for (const sibling of elements.bandList.querySelectorAll(".band-button")) {
+    sibling.classList.remove("selected");
+  }
+
+  setLookupState("Cloudlog", "Waiting", "pending");
+  updateSubmitAvailability();
+}
+
 function setSentSerialLocked(isLocked) {
   state.sentSerialLocked = isLocked;
   elements.sentSerialInput.readOnly = isLocked;
@@ -573,6 +715,7 @@ function updateSubmitAvailability() {
     state.isSubmitting ||
     !state.appReady ||
     state.cloudlogAlreadyLogged ||
+    !state.selectedBand ||
     !state.selectedOperatorCallsign;
   elements.callsignInput.dataset.duplicate = String(state.cloudlogAlreadyLogged);
 
@@ -583,6 +726,11 @@ function updateSubmitAvailability() {
 
   if (!state.selectedOperatorCallsign) {
     elements.submitButton.textContent = "Pick operator";
+    return;
+  }
+
+  if (!state.selectedBand) {
+    elements.submitButton.textContent = "Pick band";
     return;
   }
 
@@ -621,6 +769,18 @@ function applyOperatorStatsVisibility() {
   elements.operatorStatsToggleText.textContent = isVisible ? "Hide stats" : "Show stats";
 }
 
+function applyAutoBandToggleState() {
+  const available = Boolean(state.config?.radioFrequencyConfigured);
+  elements.autoBandToggle.disabled = !available;
+  elements.autoBandToggle.checked = available && state.autoBandEnabled;
+  elements.autoBandToggleText.textContent = available
+    ? state.autoBandEnabled
+      ? "Auto band on"
+      : "Auto band off"
+    : "Auto band unavailable";
+  applyBandSelectionLock();
+}
+
 function formatCloudlogLoggedAt(dateValue, timeValue) {
   const rawDate = `${dateValue || ""}`.trim();
   const rawTime = `${timeValue || ""}`.trim();
@@ -638,6 +798,29 @@ function formatCloudlogLoggedAt(dateValue, timeValue) {
   }
 
   return [formattedDate, rawTime].filter(Boolean).join(" ");
+}
+
+function resolveConfiguredBand(band) {
+  const normalizedTarget = `${band || ""}`.trim().toLowerCase();
+  if (!normalizedTarget) {
+    return "";
+  }
+
+  return (state.config?.bands || []).find((entry) => entry.trim().toLowerCase() === normalizedTarget) || "";
+}
+
+function applyBandSelectionLock() {
+  const locked = isBandSelectionLocked();
+  elements.bandList.dataset.locked = String(locked);
+
+  for (const button of elements.bandList.querySelectorAll(".band-button")) {
+    button.disabled = locked;
+    button.setAttribute("aria-disabled", String(locked));
+  }
+}
+
+function isBandSelectionLocked() {
+  return state.autoBandEnabled && state.autoBandLockActive;
 }
 
 function escapeHtml(value) {

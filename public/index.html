@@ -87,6 +87,21 @@
               <div class="band-list" id="band-list"></div>
             </div>
 
+            <div class="frequency-panel" id="frequency-panel" data-tone="pending">
+              <div class="frequency-panel-head">
+                <span>Live frequency</span>
+                <strong id="radio-frequency-display">Waiting</strong>
+              </div>
+              <div class="frequency-panel-controls">
+                <label class="switch-toggle" for="auto-band-toggle">
+                  <input id="auto-band-toggle" type="checkbox">
+                  <span class="switch-slider" aria-hidden="true"></span>
+                  <span class="switch-toggle-text" id="auto-band-toggle-text">Auto band off</span>
+                </label>
+              </div>
+              <p class="frequency-meta" id="radio-frequency-meta">Set RADIO_FREQUENCY_FILE to enable live rig frequency.</p>
+            </div>
+
             <button class="primary-button" id="submit-button" type="submit">Log QSO</button>
             <p class="form-message" id="form-message"></p>
           </form>
