@@ -529,9 +529,9 @@ function buildOperatorStats(entries) {
 function detectBandFromFrequency(frequencyMhz) {
   const ranges = [
     { band: "160m", min: 1.8, max: 2 },
-    { band: "80m", min: 3.5, max: 4 },
+    { band: "80m", min: 3.5, max: 3.8 },
     { band: "60m", min: 5.06, max: 5.45 },
-    { band: "40m", min: 7, max: 7.3 },
+    { band: "40m", min: 7, max: 7.2 },
     { band: "30m", min: 10.1, max: 10.15 },
     { band: "20m", min: 14, max: 14.35 },
     { band: "17m", min: 18.068, max: 18.168 },
