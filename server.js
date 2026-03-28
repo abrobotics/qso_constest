@@ -1058,17 +1058,12 @@ function parseRecentQsoCount(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
-function buildSerialState(recentResponse, backupState) {
-  const publicQsoCount = parseRecentQsoCount(recentResponse?.count);
+function buildSerialState(_recentResponse, backupState) {
   const backupCount = Array.isArray(backupState?.entries) ? backupState.entries.length : 0;
-  const totalQsoCount = publicQsoCount ?? backupCount;
 
   return {
-    nextSerial: computeNextSerial(totalQsoCount),
-    countWarning:
-      publicQsoCount !== null && publicQsoCount !== backupCount
-        ? `Warning: public logbook count is ${publicQsoCount}, but local backup count is ${backupCount}.`
-        : ""
+    nextSerial: computeNextSerial(backupCount),
+    countWarning: ""
   };
 }
 
