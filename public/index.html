@@ -12,13 +12,13 @@
         <div>
           <p class="eyebrow">Cloudlog Contest Logger</p>
           <h1 id="hero-title">Keep it up !</h1>
-          <p class="hero-copy">
+          <p class="hero-copy" id="hero-copy">
             Enter the callsign, the received serial, pick the band, and push it straight into Cloudlog.
           </p>
         </div>
         <div class="hero-stats">
           <div class="stat-card">
-            <span class="stat-label">Next sent</span>
+            <span class="stat-label" id="next-serial-label">Next sent</span>
             <strong id="next-serial-display">001</strong>
           </div>
           <div class="stat-card">
@@ -67,12 +67,12 @@
 
             <div class="form-grid">
               <label class="field">
-                <span>Received serial</span>
-                <input id="received-serial-input" name="receivedSerial" inputmode="numeric" pattern="[0-9]*" placeholder="001">
+                <span id="received-serial-label">Received serial</span>
+                <input id="received-serial-input" name="receivedSerial" inputmode="numeric" pattern="[0-9]*" placeholder="001" autocomplete="off">
               </label>
 
               <label class="field">
-                <span>Sent serial</span>
+                <span id="sent-serial-label">Sent serial</span>
                 <div class="locked-input">
                   <input id="sent-serial-input" name="sentSerial" inputmode="numeric" pattern="[0-9]*" readonly>
                   <button class="lock-button" id="sent-serial-lock-button" type="button" aria-pressed="true">
@@ -126,6 +126,7 @@
               <span>Local backup</span>
               <strong id="backup-status">0 QSOs saved</strong>
             </div>
+            <a class="cabrillo-link" id="cabrillo-link" href="/api/cabrillo" download>Download Cabrillo log</a>
             <div class="operator-panel-controls">
               <label class="operator-stats-toggle" for="operator-stats-toggle">
                 <input id="operator-stats-toggle" type="checkbox" checked>

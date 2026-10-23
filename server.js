@@ -41,8 +41,27 @@ const config = {
     : "",
   qrzAgent: (process.env.QRZ_AGENT || `qso_constest/${appVersion}`).trim(),
   qrzPassword: process.env.QRZ_PASSWORD || "",
-  qrzUsername: process.env.QRZ_USERNAME || ""
+  qrzUsername: process.env.QRZ_USERNAME || "",
+  // "serial" (default) or "cqzone" (CQ WW style: RST + CQ zone)
+  exchangeType: `${process.env.EXCHANGE_TYPE || "serial"}`.trim().toLowerCase() === "cqzone" ? "cqzone" : "serial",
+  myCqZone: parseCqZone(process.env.MY_CQ_ZONE || ""),
+  // Optional contest window (UTC). When set, dupes are checked against QSOs
+  // logged inside this window only, instead of the whole Cloudlog logbook.
+  contestStart: parseUtcDateTime(process.env.CONTEST_START || ""),
+  contestEnd: parseUtcDateTime(process.env.CONTEST_END || ""),
+  cabrillo: {
+    callsign: normalizeCallsign(process.env.CABRILLO_CALLSIGN || ""),
+    categoryOperator: `${process.env.CABRILLO_CATEGORY_OPERATOR || "SINGLE-OP"}`.trim().toUpperCase(),
+    categoryAssisted: `${process.env.CABRILLO_CATEGORY_ASSISTED || "NON-ASSISTED"}`.trim().toUpperCase(),
+    categoryBand: `${process.env.CABRILLO_CATEGORY_BAND || "ALL"}`.trim().toUpperCase(),
+    categoryPower: `${process.env.CABRILLO_CATEGORY_POWER || "LOW"}`.trim().toUpperCase(),
+    categoryTransmitter: `${process.env.CABRILLO_CATEGORY_TRANSMITTER || "ONE"}`.trim().toUpperCase(),
+    name: `${process.env.CABRILLO_NAME || ""}`.trim(),
+    email: `${process.env.CABRILLO_EMAIL || ""}`.trim()
+  }
 };
+
+const contestWindowEnabled = Boolean(config.contestStart && config.contestEnd);
 
 const qrzSession = {
   key: "",
@@ -68,6 +87,10 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/radio_frequency" && req.method === "GET") {
       return handleRadioFrequency(req, res);
+    }
+
+    if (url.pathname === "/api/cabrillo" && req.method === "GET") {
+      return handleCabrillo(req, res);
     }
 
     if (req.method === "GET") {
@@ -107,6 +130,11 @@ async function handleBootstrap(_req, res) {
       publicLogbookUrl: buildPublicLogbookUrl(),
       radioFrequencyConfigured: Boolean(config.radioFrequencyFile),
       serialPad: config.serialPad,
+      exchangeType: config.exchangeType,
+      myCqZone: config.myCqZone,
+      contestWindow: contestWindowEnabled
+        ? { start: config.contestStart.toISOString(), end: config.contestEnd.toISOString() }
+        : null,
       lookupProvider: "qrz, hamdb"
     },
     backupCount: backupState.entries.length,
@@ -169,8 +197,20 @@ async function handleLookup(_req, res, url) {
   const response = {
     callsign,
     cloudlog: null,
+    contestDupe: null,
     external: null
   };
+
+  if (contestWindowEnabled) {
+    const backupState = await readBackupState().catch(() => ({ entries: [] }));
+    const dupe = findContestDupe(backupState.entries, callsign, band);
+    response.contestDupe = {
+      enabled: true,
+      dupe: Boolean(dupe),
+      qsoDate: dupe?.qsoDate || "",
+      timeOn: dupe?.timeOn || ""
+    };
+  }
 
   if (cloudlogResult.status === "fulfilled") {
     response.cloudlog = summarizeCloudlogLookup(cloudlogResult.value);
@@ -208,25 +248,71 @@ async function handleLog(req, res) {
   const callsign = normalizeCallsign(body.callsign || "");
   const band = (body.band || "").trim();
   const operatorCallsign = normalizeCallsign(body.operatorCallsign || "");
-  const receivedSerial = `${body.receivedSerial || ""}`.trim();
-  const sentSerialValue = Number.parseInt(`${body.sentSerial || ""}`, 10);
   const stationProfileId = `${body.stationProfileId || ""}`.trim() || pickStationProfileId(await fetchStationProfiles());
+  const isZoneExchange = config.exchangeType === "cqzone";
 
-  if (!callsign || !band || !operatorCallsign || !receivedSerial || !Number.isFinite(sentSerialValue) || !stationProfileId) {
-    return sendJson(res, 400, { error: "Operator, callsign, band, serials, and station profile are required" });
+  let exchangeFields;
+  let sentExchange;
+  let receivedExchange;
+  let sentSerial = "";
+  let receivedSerialString = "";
+
+  if (isZoneExchange) {
+    const receivedZone = parseCqZone(body.receivedZone);
+    const sentZone = parseCqZone(body.sentZone) || config.myCqZone;
+
+    if (!callsign || !band || !operatorCallsign || !receivedZone || !sentZone || !stationProfileId) {
+      return sendJson(res, 400, { error: "Operator, callsign, band, CQ zones (1-40), and station profile are required" });
+    }
+
+    sentExchange = String(sentZone);
+    receivedExchange = String(receivedZone);
+    exchangeFields = {
+      cqz: receivedExchange,
+      my_cq_zone: sentExchange,
+      stx_string: sentExchange,
+      srx_string: receivedExchange
+    };
+  } else {
+    const receivedSerial = `${body.receivedSerial || ""}`.trim();
+    const sentSerialValue = Number.parseInt(`${body.sentSerial || ""}`, 10);
+
+    if (!callsign || !band || !operatorCallsign || !receivedSerial || !Number.isFinite(sentSerialValue) || !stationProfileId) {
+      return sendJson(res, 400, { error: "Operator, callsign, band, serials, and station profile are required" });
+    }
+
+    sentSerial = String(sentSerialValue).padStart(config.serialPad, "0");
+    receivedSerialString = receivedSerial.padStart(config.serialPad, "0");
+    sentExchange = String(sentSerialValue);
+    receivedExchange = stripLeadingZeros(receivedSerialString);
+    exchangeFields = {
+      stx: sentExchange,
+      srx: receivedExchange
+    };
   }
 
-  const duplicateCheck = await checkCloudlogCallsign(callsign, band);
-  if (isCloudlogAlreadyLogged(duplicateCheck)) {
-    return sendJson(res, 409, {
-      error: `${callsign} is already logged in Cloudlog for ${band}.`,
-      cloudlog: summarizeCloudlogLookup(duplicateCheck)
-    });
+  if (contestWindowEnabled) {
+    // Contest rules: a station counts once per band during the contest.
+    // QSOs made before the contest must not block logging.
+    const { entries } = await readBackupState();
+    const dupe = findContestDupe(entries, callsign, band);
+    if (dupe) {
+      return sendJson(res, 409, {
+        error: `${callsign} is a dupe on ${band} (already worked at ${dupe.timeOn || "?"} UTC).`
+      });
+    }
+  } else {
+    const duplicateCheck = await checkCloudlogCallsign(callsign, band);
+    if (isCloudlogAlreadyLogged(duplicateCheck)) {
+      return sendJson(res, 409, {
+        error: `${callsign} is already logged in Cloudlog for ${band}.`,
+        cloudlog: summarizeCloudlogLookup(duplicateCheck)
+      });
+    }
   }
 
   const radioFrequency = await readRadioFrequencyState().catch(() => null);
-  const sentSerial = String(sentSerialValue).padStart(config.serialPad, "0");
-  const receivedSerialString = receivedSerial.padStart(config.serialPad, "0");
+  const frequency = resolveAdifFrequency(band, radioFrequency);
   const now = new Date();
   const qsoDate = formatUtcDate(now);
   const timeOn = formatUtcTime(now);
@@ -234,7 +320,7 @@ async function handleLog(req, res) {
     call: callsign,
     band,
     contest_id: config.contestId,
-    freq: resolveAdifFrequency(band, radioFrequency),
+    freq: frequency,
     mode: config.defaultMode,
     operator: operatorCallsign,
     qso_date: qsoDate,
@@ -242,8 +328,7 @@ async function handleLog(req, res) {
     time_off: timeOn,
     rst_sent: config.defaultRstSent,
     rst_rcvd: config.defaultRstRcvd,
-    stx: String(sentSerialValue),
-    srx: stripLeadingZeros(receivedSerialString)
+    ...exchangeFields
   });
 
   const cloudlogResponse = await postCloudlog("qso", {
@@ -258,8 +343,16 @@ async function handleLog(req, res) {
     operatorCallsign,
     callsign,
     band,
-    receivedSerial: receivedSerialString,
-    sentSerial,
+    receivedSerial: receivedSerialString || undefined,
+    sentSerial: sentSerial || undefined,
+    exchangeType: config.exchangeType,
+    sentExchange,
+    receivedExchange,
+    rstSent: config.defaultRstSent,
+    rstRcvd: config.defaultRstRcvd,
+    mode: config.defaultMode,
+    frequency,
+    contestId: config.contestId || undefined,
     stationProfileId,
     qsoDate,
     timeOn,
@@ -318,6 +411,9 @@ function validateBaseConfig() {
   if (!config.cloudlogBaseUrl) issues.push("CLOUDLOG_BASE_URL");
   if (!config.cloudlogApiKey) issues.push("CLOUDLOG_API_KEY");
   if (!config.cloudlogLogbookSlug) issues.push("CLOUDLOG_LOGBOOK_PUBLIC_SLUG");
+  if (config.exchangeType === "cqzone" && !config.myCqZone) issues.push("MY_CQ_ZONE (1-40)");
+  if (Boolean(config.contestStart) !== Boolean(config.contestEnd)) issues.push("CONTEST_START and CONTEST_END (both required)");
+  if (contestWindowEnabled && config.contestEnd <= config.contestStart) issues.push("CONTEST_END must be after CONTEST_START");
 
   return issues;
 }
@@ -741,7 +837,8 @@ async function lookupQrzCallsign(callsign) {
       country: data.callsign.country,
       class: data.callsign.class,
       state: data.callsign.state,
-      county: data.callsign.county
+      county: data.callsign.county,
+      cqZone: parseCqZone(data.callsign.cqzone) || undefined
     }
   };
 }
@@ -951,6 +1048,7 @@ function parseQrzXml(xml) {
           country: extractXmlValue(callsignXml, "country"),
           grid: extractXmlValue(callsignXml, "grid"),
           class: extractXmlValue(callsignXml, "class"),
+          cqzone: extractXmlValue(callsignXml, "cqzone"),
           status: extractXmlValue(callsignXml, "status")
         }
       : null
@@ -1072,7 +1170,33 @@ function computeNextSerial(totalQsoCount) {
   return safeCount + 1;
 }
 
+function isPhoneMode(mode) {
+  return ["SSB", "USB", "LSB", "PH", "FM", "AM"].includes(`${mode || ""}`.trim().toUpperCase());
+}
+
 function defaultFrequencyForBand(band) {
+  // Used only when no live rig frequency is available.
+  if (isPhoneMode(config.defaultMode)) {
+    const phoneDefaults = {
+      "160m": "1.850",
+      "80m": "3.700",
+      "60m": "5.360",
+      "40m": "7.100",
+      "20m": "14.200",
+      "17m": "18.140",
+      "15m": "21.250",
+      "12m": "24.950",
+      "10m": "28.500",
+      "6m": "50.150",
+      "2m": "144.300",
+      "70cm": "432.200"
+    };
+    const phoneFrequency = phoneDefaults[`${band || ""}`.trim().toLowerCase()];
+    if (phoneFrequency) {
+      return phoneFrequency;
+    }
+  }
+
   const defaults = {
     "160m": "1.838",
     "80m": "3.583",
@@ -1132,6 +1256,167 @@ function formatUtcTime(date) {
     String(date.getUTCMinutes()).padStart(2, "0"),
     String(date.getUTCSeconds()).padStart(2, "0")
   ].join("");
+}
+
+function parseCqZone(value) {
+  const text = `${value ?? ""}`.trim();
+  if (!/^\d{1,2}$/.test(text)) {
+    return 0;
+  }
+
+  const zone = Number.parseInt(text, 10);
+  return zone >= 1 && zone <= 40 ? zone : 0;
+}
+
+function parseUtcDateTime(value) {
+  const text = `${value || ""}`.trim();
+  if (!text) {
+    return null;
+  }
+
+  // Accept "2026-10-24T00:00:00Z" as well as "2026-10-24 00:00" (assumed UTC).
+  const normalized = /[zZ]|[+-]\d{2}:?\d{2}$/.test(text) ? text : `${text.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function entryTimestamp(entry) {
+  const qsoDate = `${entry?.qsoDate || ""}`;
+  const timeOn = `${entry?.timeOn || ""}`.padEnd(6, "0");
+  if (/^\d{8}$/.test(qsoDate) && /^\d{6}$/.test(timeOn)) {
+    return new Date(Date.UTC(
+      Number(qsoDate.slice(0, 4)),
+      Number(qsoDate.slice(4, 6)) - 1,
+      Number(qsoDate.slice(6, 8)),
+      Number(timeOn.slice(0, 2)),
+      Number(timeOn.slice(2, 4)),
+      Number(timeOn.slice(4, 6))
+    ));
+  }
+
+  const loggedAt = entry?.loggedAt ? new Date(entry.loggedAt) : null;
+  return loggedAt && !Number.isNaN(loggedAt.getTime()) ? loggedAt : null;
+}
+
+function isEntryInContest(entry) {
+  if (config.contestId && entry?.contestId && entry.contestId !== config.contestId) {
+    return false;
+  }
+
+  if (!contestWindowEnabled) {
+    return true;
+  }
+
+  const timestamp = entryTimestamp(entry);
+  return Boolean(timestamp) && timestamp >= config.contestStart && timestamp <= config.contestEnd;
+}
+
+function findContestDupe(entries, callsign, band) {
+  const normalizedCallsign = normalizeCallsign(callsign);
+  const normalizedBand = `${band || ""}`.trim().toLowerCase();
+  if (!normalizedCallsign || !normalizedBand) {
+    return null;
+  }
+
+  return (entries || []).find((entry) =>
+    isEntryInContest(entry) &&
+    normalizeCallsign(entry.callsign || "") === normalizedCallsign &&
+    `${entry.band || ""}`.trim().toLowerCase() === normalizedBand
+  ) || null;
+}
+
+function cabrilloMode(mode) {
+  const normalized = `${mode || ""}`.trim().toUpperCase();
+  if (isPhoneMode(normalized)) return "PH";
+  if (normalized === "CW") return "CW";
+  if (normalized === "RTTY") return "RY";
+  return "DG";
+}
+
+function cabrilloCategoryMode(mode) {
+  const value = cabrilloMode(mode);
+  return { PH: "SSB", CW: "CW", RY: "RTTY", DG: "DIGI" }[value] || "MIXED";
+}
+
+async function handleCabrillo(_req, res) {
+  const { entries } = await readBackupState();
+  const contestEntries = entries
+    .filter(isEntryInContest)
+    .sort((left, right) => (entryTimestamp(left)?.getTime() || 0) - (entryTimestamp(right)?.getTime() || 0));
+
+  let stationCallsign = config.cabrillo.callsign;
+  if (!stationCallsign && validateBaseConfig().length === 0) {
+    const stations = await fetchStationProfiles().catch(() => []);
+    const stationId = pickStationProfileId(stations);
+    const station = Array.isArray(stations)
+      ? stations.find((entry) => `${entry.station_id}` === stationId)
+      : null;
+    stationCallsign = normalizeCallsign(station?.station_callsign || "");
+  }
+  stationCallsign = stationCallsign || config.defaultOperatorCallsign || "NOCALL";
+
+  const text = buildCabrillo(contestEntries, stationCallsign);
+  const fileName = `${stationCallsign.replaceAll("/", "_")}-${config.contestId || "contest"}.log`;
+
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${fileName}"`,
+    "Content-Length": Buffer.byteLength(text)
+  });
+  res.end(text);
+}
+
+function buildCabrillo(entries, stationCallsign) {
+  const operators = Array.from(new Set(
+    entries.map((entry) => normalizeCallsign(entry.operatorCallsign || "")).filter(Boolean)
+  ));
+  const isMultiOp = config.cabrillo.categoryOperator !== "SINGLE-OP" && config.cabrillo.categoryOperator !== "CHECKLOG";
+
+  const header = [
+    ["START-OF-LOG", "3.0"],
+    ["CREATED-BY", `qso_constest ${config.appVersion}`],
+    ["CONTEST", config.contestId || "UNKNOWN"],
+    ["CALLSIGN", stationCallsign],
+    ["CATEGORY-OPERATOR", config.cabrillo.categoryOperator],
+    ["CATEGORY-ASSISTED", config.cabrillo.categoryAssisted],
+    ["CATEGORY-BAND", config.cabrillo.categoryBand],
+    ["CATEGORY-MODE", cabrilloCategoryMode(config.defaultMode)],
+    ["CATEGORY-POWER", config.cabrillo.categoryPower],
+    ["CATEGORY-TRANSMITTER", config.cabrillo.categoryTransmitter],
+    ["OPERATORS", isMultiOp ? operators.join(" ") : (operators[0] || stationCallsign)],
+    ["NAME", config.cabrillo.name],
+    ["EMAIL", config.cabrillo.email]
+  ]
+    .filter(([, value]) => `${value || ""}`.trim() !== "")
+    .map(([key, value]) => `${key}: ${value}`);
+
+  const lines = entries.map((entry) => {
+    const frequencyMhz = Number.parseFloat(entry.frequency || defaultFrequencyForBand(entry.band) || "0");
+    const frequencyKhz = Number.isFinite(frequencyMhz) && frequencyMhz > 0 ? String(Math.round(frequencyMhz * 1000)) : "0";
+    const qsoDate = `${entry.qsoDate || ""}`;
+    const date = /^\d{8}$/.test(qsoDate)
+      ? `${qsoDate.slice(0, 4)}-${qsoDate.slice(4, 6)}-${qsoDate.slice(6, 8)}`
+      : "";
+    const time = `${entry.timeOn || ""}`.slice(0, 4);
+    const sentExchange = entry.sentExchange || stripLeadingZeros(`${entry.sentSerial || ""}`);
+    const receivedExchange = entry.receivedExchange || stripLeadingZeros(`${entry.receivedSerial || ""}`);
+
+    return [
+      "QSO:",
+      frequencyKhz.padStart(5),
+      cabrilloMode(entry.mode || config.defaultMode),
+      date,
+      time,
+      stationCallsign.padEnd(13),
+      `${entry.rstSent || config.defaultRstSent}`.padEnd(3),
+      `${sentExchange}`.padEnd(6),
+      normalizeCallsign(entry.callsign || "").padEnd(13),
+      `${entry.rstRcvd || config.defaultRstRcvd}`.padEnd(3),
+      `${receivedExchange}`
+    ].join(" ").trimEnd();
+  });
+
+  return [...header, ...lines, "END-OF-LOG:", ""].join("\r\n");
 }
 
 function stripLeadingZeros(value) {

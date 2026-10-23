@@ -13,6 +13,31 @@ Small web app for serial-only contest logging into Cloudlog.
 - Shows recent QSOs and pre-fills the next sent serial.
 - Derives the next sent serial from the public logbook count, with local backup fallback when the slug count is unavailable.
 
+## CQ WW DX (zone exchange)
+
+The app also supports contests whose exchange is RST + CQ zone, such as the CQ World Wide DX Contest. Example `.env` for CQ WW DX SSB 2026 from France (zone 14):
+
+```bash
+CONTEST_ID=CQ-WW-SSB
+DEFAULT_MODE=SSB
+EXCHANGE_TYPE=cqzone
+MY_CQ_ZONE=14
+CONTEST_START=2026-10-24T00:00:00Z
+CONTEST_END=2026-10-25T23:59:59Z
+BANDS=160m,80m,40m,20m,15m,10m
+```
+
+- The serial fields become "Received zone" / "Sent zone" (1-40). The QSO is sent to Cloudlog with ADIF `CQZ`, `MY_CQ_ZONE`, `STX_STRING` and `SRX_STRING`.
+- When QRZ credentials are configured, the received zone is pre-filled from the QRZ `cqzone` field. Always check it against what the station sends.
+- With `CONTEST_START`/`CONTEST_END`, dupes are checked per band inside the contest window, from the local backup log. Stations worked before the contest are shown as "New (worked before)" and can be logged.
+- Without a live rig frequency, SSB QSOs use phone default frequencies (14.200, 7.100...). Prefer `RADIO_FREQUENCY_FILE` so the Cabrillo log carries the real frequency.
+
+## Cabrillo export
+
+`GET /api/cabrillo` (the "Download Cabrillo log" link in the UI) builds a Cabrillo 3.0 file from the local backup log, filtered on `CONTEST_ID` and the contest window when set. Header categories come from the `CABRILLO_*` variables. Review the file before submitting it.
+
+QSOs logged with an older version of the app have no stored frequency, mode or zone: they fall back to default values in the export.
+
 ## Cloudlog APIs used
 
 This app is built around the current Cloudlog API wiki:

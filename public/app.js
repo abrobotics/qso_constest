@@ -19,7 +19,8 @@ const state = {
   selectedStationProfileId: "",
   sentSerialLocked: true,
   lookupTimer: null,
-  lastLookupValue: ""
+  lastLookupValue: "",
+  receivedZoneAutoFilled: false
 };
 
 const elements = {
@@ -36,10 +37,12 @@ const elements = {
   formMessage: document.querySelector("#form-message"),
   backupStatus: document.querySelector("#backup-status"),
   heroTitle: document.querySelector("#hero-title"),
+  heroCopy: document.querySelector("#hero-copy"),
   countWarning: document.querySelector("#count-warning"),
   lookupDetail: document.querySelector("#lookup-detail"),
   lookupProviderDisplay: document.querySelector("#lookup-provider-display"),
   nextSerialDisplay: document.querySelector("#next-serial-display"),
+  nextSerialLabel: document.querySelector("#next-serial-label"),
   operatorPodium: document.querySelector("#operator-podium"),
   operatorRestList: document.querySelector("#operator-rest-list"),
   operatorSelect: document.querySelector("#operator-select"),
@@ -52,6 +55,8 @@ const elements = {
   frequencyPanel: document.querySelector("#frequency-panel"),
   recentList: document.querySelector("#recent-list"),
   receivedSerialInput: document.querySelector("#received-serial-input"),
+  receivedSerialLabel: document.querySelector("#received-serial-label"),
+  sentSerialLabel: document.querySelector("#sent-serial-label"),
   sentSerialLockButton: document.querySelector("#sent-serial-lock-button"),
   sentSerialInput: document.querySelector("#sent-serial-input"),
   stationMeta: document.querySelector("#station-meta"),
@@ -88,14 +93,31 @@ elements.form.addEventListener("submit", async (event) => {
   const operatorCallsign = state.selectedOperatorCallsign;
   const receivedSerial = digitsOnly(elements.receivedSerialInput.value);
   const sentSerial = digitsOnly(elements.sentSerialInput.value);
+  const zoneMode = isZoneMode();
 
   if (!callsign || !operatorCallsign || !receivedSerial || !sentSerial || !state.selectedBand) {
-    setFormMessage("Operator, callsign, serials, and band are required.", "error");
+    setFormMessage(
+      zoneMode
+        ? "Operator, callsign, CQ zones, and band are required."
+        : "Operator, callsign, serials, and band are required.",
+      "error"
+    );
+    return;
+  }
+
+  if (zoneMode && (!isValidCqZone(receivedSerial) || !isValidCqZone(sentSerial))) {
+    setFormMessage("CQ zones must be between 1 and 40.", "error");
+    elements.receivedSerialInput.focus();
     return;
   }
 
   if (state.cloudlogAlreadyLogged) {
-    setFormMessage(`${callsign} is already logged in Cloudlog for ${state.selectedBand}.`, "error");
+    setFormMessage(
+      isContestWindowEnabled()
+        ? `${callsign} is a dupe on ${state.selectedBand}.`
+        : `${callsign} is already logged in Cloudlog for ${state.selectedBand}.`,
+      "error"
+    );
     return;
   }
 
@@ -110,8 +132,10 @@ elements.form.addEventListener("submit", async (event) => {
       body: JSON.stringify({
         callsign,
         operatorCallsign,
-        receivedSerial,
-        sentSerial,
+        receivedSerial: zoneMode ? undefined : receivedSerial,
+        sentSerial: zoneMode ? undefined : sentSerial,
+        receivedZone: zoneMode ? receivedSerial : undefined,
+        sentZone: zoneMode ? sentSerial : undefined,
         band: state.selectedBand,
         stationProfileId: state.selectedStationProfileId
       })
@@ -135,7 +159,8 @@ elements.form.addEventListener("submit", async (event) => {
     renderRecentQsos(payload.recentQsos || []);
     elements.callsignInput.value = "";
     elements.receivedSerialInput.value = "";
-    elements.sentSerialInput.value = String(state.nextSerial).padStart(state.config.serialPad, "0");
+    state.receivedZoneAutoFilled = false;
+    elements.sentSerialInput.value = defaultSentExchange();
     setSentSerialLocked(true);
     resetLookup();
     setFormMessage(`Logged ${payload.callsign} on ${state.selectedBand}.`, "success");
@@ -152,6 +177,11 @@ elements.callsignInput.addEventListener("input", () => {
   elements.callsignInput.value = callsign;
   renderFormatState(callsign);
   state.cloudlogAlreadyLogged = false;
+  if (state.receivedZoneAutoFilled) {
+    // Zone was suggested for the previous callsign; drop it.
+    elements.receivedSerialInput.value = "";
+    state.receivedZoneAutoFilled = false;
+  }
   updateSubmitAvailability();
 
   window.clearTimeout(state.lookupTimer);
@@ -171,11 +201,14 @@ elements.callsignInput.addEventListener("input", () => {
 });
 
 elements.receivedSerialInput.addEventListener("input", () => {
-  elements.receivedSerialInput.value = digitsOnly(elements.receivedSerialInput.value);
+  const digits = digitsOnly(elements.receivedSerialInput.value);
+  elements.receivedSerialInput.value = isZoneMode() ? digits.slice(0, 2) : digits;
+  state.receivedZoneAutoFilled = false;
 });
 
 elements.sentSerialInput.addEventListener("input", () => {
-  elements.sentSerialInput.value = digitsOnly(elements.sentSerialInput.value);
+  const digits = digitsOnly(elements.sentSerialInput.value);
+  elements.sentSerialInput.value = isZoneMode() ? digits.slice(0, 2) : digits;
 });
 
 elements.sentSerialLockButton.addEventListener("click", () => {
@@ -204,6 +237,7 @@ async function bootstrap() {
   state.autoBandEnabled = Boolean(payload.config.radioFrequencyConfigured);
 
   elements.lookupProviderDisplay.textContent = payload.config.lookupProvider;
+  applyExchangeLabels();
   renderBands(payload.config.bands);
   renderOperatorOptions(payload.operators || [], payload.selectedOperatorCallsign || "");
   renderBackupState(payload.backupCount || 0, state.operatorStats);
@@ -287,9 +321,44 @@ function formatBandDisplay(band) {
 }
 
 function renderNextSerial() {
-  const padded = String(state.nextSerial).padStart(state.config.serialPad, "0");
-  elements.nextSerialDisplay.textContent = padded;
-  elements.sentSerialInput.value = padded;
+  const value = defaultSentExchange();
+  elements.nextSerialDisplay.textContent = value;
+  elements.sentSerialInput.value = value;
+}
+
+function isZoneMode() {
+  return state.config?.exchangeType === "cqzone";
+}
+
+function isContestWindowEnabled() {
+  return Boolean(state.config?.contestWindow);
+}
+
+function isValidCqZone(value) {
+  const zone = Number.parseInt(`${value || ""}`, 10);
+  return /^\d{1,2}$/.test(`${value || ""}`) && zone >= 1 && zone <= 40;
+}
+
+function defaultSentExchange() {
+  if (isZoneMode()) {
+    return state.config?.myCqZone ? String(state.config.myCqZone) : "";
+  }
+
+  return String(state.nextSerial).padStart(state.config.serialPad, "0");
+}
+
+function applyExchangeLabels() {
+  if (!isZoneMode()) {
+    return;
+  }
+
+  elements.heroCopy.textContent = "Enter the callsign, the received CQ zone, pick the band, and push it straight into Cloudlog.";
+  elements.nextSerialLabel.textContent = "My zone";
+  elements.receivedSerialLabel.textContent = "Received zone";
+  elements.sentSerialLabel.textContent = "Sent zone";
+  elements.receivedSerialInput.placeholder = "1-40";
+  elements.receivedSerialInput.maxLength = 2;
+  elements.sentSerialInput.maxLength = 2;
 }
 
 function renderEntryTitle() {
@@ -533,7 +602,21 @@ async function lookupCallsign(callsign) {
     throw new Error(payload.error || "Lookup failed");
   }
 
-  if (payload.cloudlog) {
+  if (payload.contestDupe?.enabled) {
+    const isDupe = Boolean(payload.contestDupe.dupe);
+    const workedBefore = Boolean(payload.cloudlog?.ok && payload.cloudlog.workedBefore);
+    state.cloudlogAlreadyLogged = isDupe;
+    updateSubmitAvailability();
+    setLookupState(
+      "Cloudlog",
+      isDupe
+        ? `Dupe ${formatUtcHhmm(payload.contestDupe.timeOn)}`.trim()
+        : workedBefore
+          ? "New (worked before)"
+          : "New",
+      isDupe ? "warn" : "ready"
+    );
+  } else if (payload.cloudlog) {
     if (payload.cloudlog.ok) {
       const cloudlogResult = `${payload.cloudlog.raw?.result || ""}`.trim().toLowerCase();
       const alreadyLogged = cloudlogResult === "found";
@@ -569,10 +652,22 @@ async function lookupCallsign(callsign) {
     }
   }
 
+  const suggestedZone = payload.external?.details?.cqZone;
+  if (
+    isZoneMode() &&
+    suggestedZone &&
+    normalizeCallsign(elements.callsignInput.value) === payload.callsign &&
+    (!elements.receivedSerialInput.value || state.receivedZoneAutoFilled)
+  ) {
+    elements.receivedSerialInput.value = String(suggestedZone);
+    state.receivedZoneAutoFilled = true;
+  }
+
   const detailParts = [];
   if (payload.external?.details?.name) detailParts.push(payload.external.details.name);
   if (payload.external?.details?.country) detailParts.push(payload.external.details.country);
   if (payload.external?.details?.grid) detailParts.push(`Grid ${payload.external.details.grid}`);
+  if (isZoneMode() && suggestedZone) detailParts.push(`CQ zone ${suggestedZone} (QRZ)`);
   if (Array.isArray(payload.external?.warnings)) detailParts.push(...payload.external.warnings);
   if (detailParts.length === 0) {
     detailParts.push(payload.external?.message || payload.cloudlog?.message || "Lookup complete.");
@@ -604,6 +699,10 @@ function renderFormatState(callsign) {
 
 function resetLookup(resetValue = true) {
   state.cloudlogAlreadyLogged = false;
+  if (state.receivedZoneAutoFilled) {
+    elements.receivedSerialInput.value = "";
+    state.receivedZoneAutoFilled = false;
+  }
   setLookupState("Cloudlog", "Waiting", "pending");
   setExternalState("Callbooks", "Waiting", "pending");
   elements.lookupDetail.textContent = "Type a callsign to start live lookup.";
@@ -734,7 +833,9 @@ function updateSubmitAvailability() {
     return;
   }
 
-  elements.submitButton.textContent = state.cloudlogAlreadyLogged ? "Already logged" : "Log QSO";
+  elements.submitButton.textContent = state.cloudlogAlreadyLogged
+    ? isContestWindowEnabled() ? "Dupe" : "Already logged"
+    : "Log QSO";
 }
 
 function normalizeCallsign(value) {
@@ -779,6 +880,11 @@ function applyAutoBandToggleState() {
       : "Auto band off"
     : "Auto band unavailable";
   applyBandSelectionLock();
+}
+
+function formatUtcHhmm(timeValue) {
+  const raw = `${timeValue || ""}`.trim();
+  return /^\d{4}/.test(raw) ? `${raw.slice(0, 2)}:${raw.slice(2, 4)}z` : "";
 }
 
 function formatCloudlogLoggedAt(dateValue, timeValue) {
